@@ -1,0 +1,38 @@
+html, body {
+  margin: 0;
+  padding: 0;
+  background: #05060a;
+  overflow: hidden;
+  height: 100%;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+}
+
+canvas {
+  display: block;
+}
+
+#hud{
+  position: fixed;
+  top: 14px;
+  left: 14px;
+  z-index: 10;
+  color: rgba(255,255,255,0.82);
+  font-size: 12px;
+  line-height: 1.35;
+  user-select: none;
+  pointer-events: none;
+  mix-blend-mode: screen;
+  text-shadow: 0 0 10px rgba(255,255,255,0.12);
+}
+
+#hud .title{
+  font-size: 13px;
+  letter-spacing: 0.3px;
+  margin-bottom: 4px;
+  color: rgba(255,255,255,0.9);
+}
+
+#hud .keys{
+  margin-top: 6px;
+  color: rgba(255,255,255,0.6);
+}
