@@ -1,361 +1,324 @@
-// art.js — Kindness Field + Secret Phrase Bloom (single file, no libs)
+// art.js — "HIERSEIN" / Chevalier-esque light installation (single file, no libs)
 (() => {
   "use strict";
 
   // ---------- Canvas ----------
-  const canvas = document.createElement("canvas");
-  const ctx = canvas.getContext("2d", { alpha: true });
+  const c = document.createElement("canvas");
+  const x = c.getContext("2d", { alpha: true });
   document.body.style.margin = "0";
   document.body.style.overflow = "hidden";
-  document.body.style.background = "#05060a";
-  document.body.appendChild(canvas);
+  document.body.style.background = "#04050a";
+  document.body.appendChild(c);
 
-  let W = 0, H = 0, DPR = 1;
-  function resize() {
+  let W=0,H=0,DPR=1;
+  function resize(){
     DPR = Math.max(1, Math.min(2, window.devicePixelRatio || 1));
-    W = Math.floor(window.innerWidth);
-    H = Math.floor(window.innerHeight);
-    canvas.width = Math.floor(W * DPR);
-    canvas.height = Math.floor(H * DPR);
-    canvas.style.width = W + "px";
-    canvas.style.height = H + "px";
-    ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
-    rebuildMask();
+    W = Math.floor(innerWidth); H = Math.floor(innerHeight);
+    c.width = Math.floor(W*DPR); c.height = Math.floor(H*DPR);
+    c.style.width = W+"px"; c.style.height = H+"px";
+    x.setTransform(DPR,0,0,DPR,0,0);
+    buildMask();
+    buildGrid();
   }
-  window.addEventListener("resize", resize, { passive: true });
+  addEventListener("resize", resize, {passive:true});
 
   // ---------- Pointer ----------
-  const pointer = { x: 0, y: 0, tx: 0, ty: 0, down: false };
-  const onMove = (x, y) => { pointer.tx = x; pointer.ty = y; };
-  window.addEventListener("mousemove", (e) => onMove(e.clientX, e.clientY), { passive: true });
-  window.addEventListener("mousedown", () => (pointer.down = true), { passive: true });
-  window.addEventListener("mouseup",   () => (pointer.down = false), { passive: true });
-  window.addEventListener("touchstart", (e) => {
-    pointer.down = true;
-    const t = e.touches[0];
-    if (t) onMove(t.clientX, t.clientY);
-  }, { passive: true });
-  window.addEventListener("touchmove", (e) => {
-    const t = e.touches[0];
-    if (t) onMove(t.clientX, t.clientY);
-  }, { passive: true });
-  window.addEventListener("touchend", () => (pointer.down = false), { passive: true });
-
-  function updatePointer() {
-    pointer.x += (pointer.tx - pointer.x) * 0.08;
-    pointer.y += (pointer.ty - pointer.y) * 0.08;
+  const P = {x:0,y:0,tx:0,ty:0,down:false};
+  const move = (px,py)=>{P.tx=px; P.ty=py;};
+  addEventListener("mousemove", e=>move(e.clientX,e.clientY), {passive:true});
+  addEventListener("mousedown", ()=>P.down=true, {passive:true});
+  addEventListener("mouseup", ()=>P.down=false, {passive:true});
+  addEventListener("touchstart", e=>{
+    P.down=true;
+    const t=e.touches[0]; if(t) move(t.clientX,t.clientY);
+  }, {passive:true});
+  addEventListener("touchmove", e=>{
+    const t=e.touches[0]; if(t) move(t.clientX,t.clientY);
+  }, {passive:true});
+  addEventListener("touchend", ()=>P.down=false, {passive:true});
+  function updPointer(){
+    P.x += (P.tx-P.x)*0.08;
+    P.y += (P.ty-P.y)*0.08;
   }
 
   // ---------- Utils ----------
-  const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
-  const lerp = (a, b, t) => a + (b - a) * t;
-  const smoothstep = (t) => t * t * (3 - 2 * t);
-  const TAU = Math.PI * 2;
+  const clamp=(v,a,b)=>Math.max(a,Math.min(b,v));
+  const lerp=(a,b,t)=>a+(b-a)*t;
+  const ss=t=>t*t*(3-2*t);
+  const TAU=Math.PI*2;
 
-  // ---------- Noise ----------
-  function hash2i(x, y) {
-    let n = x * 374761393 + y * 668265263;
-    n = (n ^ (n >> 13)) >>> 0;
-    n = (n * 1274126177) >>> 0;
+  // ---------- Noise (value + fbm) ----------
+  function hash2i(ix,iy){
+    let n = ix*374761393 + iy*668265263;
+    n = (n ^ (n>>>13))>>>0;
+    n = (n*1274126177)>>>0;
     return n;
   }
-  function rand01(x, y) {
-    return (hash2i(x, y) & 0xfffffff) / 0xfffffff;
+  function r01(ix,iy){ return (hash2i(ix,iy)&0xfffffff)/0xfffffff; }
+  function n2(px,py){
+    const ix=Math.floor(px), iy=Math.floor(py);
+    const fx=px-ix, fy=py-iy;
+    const u=ss(fx), v=ss(fy);
+    const a=r01(ix,iy), b=r01(ix+1,iy), c=r01(ix,iy+1), d=r01(ix+1,iy+1);
+    return lerp(lerp(a,b,u), lerp(c,d,u), v);
   }
-  function noise2(x, y) {
-    const xi = Math.floor(x), yi = Math.floor(y);
-    const xf = x - xi,       yf = y - yi;
-    const u = smoothstep(xf), v = smoothstep(yf);
-    const a = rand01(xi, yi);
-    const b = rand01(xi + 1, yi);
-    const c = rand01(xi, yi + 1);
-    const d = rand01(xi + 1, yi + 1);
-    return lerp(lerp(a, b, u), lerp(c, d, u), v);
-  }
-  function fbm2(x, y) {
-    let f = 0, amp = 0.55, freq = 1.0;
-    for (let i = 0; i < 4; i++) {
-      f += amp * noise2(x * freq, y * freq);
-      freq *= 2.02;
-      amp *= 0.5;
+  function fbm(px,py){
+    let f=0, amp=0.55, frq=1.0;
+    for(let i=0;i<4;i++){
+      f += amp*n2(px*frq, py*frq);
+      frq*=2.03; amp*=0.5;
     }
     return f;
   }
 
-  function flowAngle(x, y, t) {
-    const s = 0.00155;
-    const n = fbm2(x * s + t * 0.00003, y * s - t * 0.000025);
-    return n * TAU * 1.2;
-  }
+  // ---------- Chevalier grid nodes ----------
+  let nodes = [];     // {x,y,z,px,py,phase}
+  let spacing = 18;
+  let cols=0, rows=0;
 
-  // ---------- Secret Phrase Mask (offscreen) ----------
-  const mask = document.createElement("canvas");
-  const mctx = mask.getContext("2d", { willReadFrequently: true });
-  let maskData = null;
-  let maskW = 0, maskH = 0;
-  const PHRASE = "HIERSEIN"; // change me
-  function rebuildMask() {
-    maskW = Math.max(320, Math.floor(W * 0.9));
-    maskH = Math.max(180, Math.floor(H * 0.35));
-    mask.width = maskW;
-    mask.height = maskH;
+  function buildGrid(){
+    nodes.length=0;
+    // spacing scales with screen: larger on mobile so it reads like installation
+    spacing = clamp(Math.min(W,H)/42, 14, 24);
+    cols = Math.floor(W/spacing)+3;
+    rows = Math.floor(H/spacing)+3;
 
-    mctx.clearRect(0, 0, maskW, maskH);
+    const ox = (W - (cols-1)*spacing)*0.5;
+    const oy = (H - (rows-1)*spacing)*0.5;
 
-    // Composition: slightly above center
-    const x = maskW * 0.5;
-    const y = maskH * 0.55;
-
-    const fontSize = Math.floor(Math.min(maskW, maskH) * 0.22);
-    mctx.font = `700 ${fontSize}px ui-sans-serif, system-ui, -apple-system, Segoe UI, Arial`;
-    mctx.textAlign = "center";
-    mctx.textBaseline = "middle";
-
-    // soft text "ink"
-    mctx.fillStyle = "rgba(255,255,255,1)";
-    mctx.fillText(PHRASE, x, y);
-
-    // blur-ish by drawing offset copies (cheap)
-    mctx.globalAlpha = 0.18;
-    for (let i = 0; i < 10; i++) {
-      const ox = (Math.random() - 0.5) * 3.0;
-      const oy = (Math.random() - 0.5) * 3.0;
-      mctx.fillText(PHRASE, x + ox, y + oy);
-    }
-    mctx.globalAlpha = 1;
-
-    maskData = mctx.getImageData(0, 0, maskW, maskH).data;
-  }
-
-  // sample mask alpha at normalized coords (0..1 in mask space)
-  function maskAlpha(nx, ny) {
-    if (!maskData) return 0;
-    const x = Math.floor(clamp(nx, 0, 1) * (maskW - 1));
-    const y = Math.floor(clamp(ny, 0, 1) * (maskH - 1));
-    const i = (y * maskW + x) * 4 + 3;
-    return maskData[i] / 255;
-  }
-
-  // ---------- Particles ----------
-  const particles = [];
-  let baseCount = 0;
-
-  function initParticles() {
-    particles.length = 0;
-    const area = W * H;
-    baseCount = Math.floor(clamp(area / 7000, 260, 1100));
-
-    // Deliberate density gradient: more in center band, less at edges
-    for (let i = 0; i < baseCount; i++) {
-      const u = Math.random();
-      const v = Math.random();
-      const x = lerp(0.08, 0.92, u) * W + (Math.random() - 0.5) * 20;
-      const y = (0.15 + 0.75 * Math.pow(v, 0.85)) * H;
-
-      particles.push({
-        x, y,
-        vx: 0, vy: 0,
-        sp: lerp(0.12, 0.62, Math.random()),
-        w: lerp(0.45, 1.35, Math.random()),
-        a: lerp(0.05, 0.16, Math.random()),
-        hue: lerp(200, 232, Math.random()),
-        seed: Math.random() * 1000
-      });
+    for(let j=0;j<rows;j++){
+      for(let i=0;i<cols;i++){
+        const gx = ox + i*spacing;
+        const gy = oy + j*spacing;
+        nodes.push({
+          x: gx, y: gy,
+          px: gx, py: gy,
+          z: Math.random(), // depth seed
+          phase: Math.random()*1000
+        });
+      }
     }
   }
 
-  // ---------- Time / Event schedule ----------
-  // "Moment" cycles: mostly normal, occasionally phrase forms
-  let nextEventAt = 0;
-  let eventStart = 0;
-  let eventDur = 0;
-  function scheduleNext(now) {
-    nextEventAt = now + lerp(38000, 72000, Math.random()); // 38–72s
-    eventStart = 0;
-    eventDur = 0;
-  }
-  function maybeStartEvent(now) {
-    if (eventStart === 0 && now >= nextEventAt) {
-      eventStart = now;
-      eventDur = lerp(2600, 4200, Math.random()); // 2.6–4.2s
-      // refresh mask slightly each event so it feels alive
-      rebuildMask();
-      scheduleNext(now);
+  // ---------- Offscreen mask for "HIERSEIN" ----------
+  const m = document.createElement("canvas");
+  const mx = m.getContext("2d", { willReadFrequently:true });
+  let mData=null, mW=0, mH=0;
+  const PHRASE="HIERSEIN";
+
+  function buildMask(){
+    mW = Math.max(420, Math.floor(W*0.85));
+    mH = Math.max(220, Math.floor(H*0.32));
+    m.width=mW; m.height=mH;
+    mx.clearRect(0,0,mW,mH);
+
+    const fs = Math.floor(Math.min(mW,mH)*0.30);
+    mx.textAlign="center";
+    mx.textBaseline="middle";
+    mx.font = `800 ${fs}px ui-sans-serif, system-ui, -apple-system, Segoe UI, Arial`;
+    mx.fillStyle="rgba(255,255,255,1)";
+    mx.fillText(PHRASE, mW*0.5, mH*0.55);
+
+    // soft glow by multiple offset draws
+    mx.globalAlpha=0.18;
+    for(let k=0;k<14;k++){
+      const ox=(Math.random()-0.5)*4.2;
+      const oy=(Math.random()-0.5)*4.2;
+      mx.fillText(PHRASE, mW*0.5+ox, mH*0.55+oy);
     }
+    mx.globalAlpha=1;
+
+    mData = mx.getImageData(0,0,mW,mH).data;
   }
-  function eventStrength(now) {
-    if (eventStart === 0) return 0;
-    const t = (now - eventStart) / eventDur;
-    if (t <= 0 || t >= 1) { eventStart = 0; return 0; }
-    // bell curve
-    const s = Math.sin(Math.PI * t);
-    return s * s;
+  function aMask(nx,ny){
+    if(!mData) return 0;
+    const xx=Math.floor(clamp(nx,0,1)*(mW-1));
+    const yy=Math.floor(clamp(ny,0,1)*(mH-1));
+    return mData[(yy*mW+xx)*4+3]/255;
   }
 
-  // ---------- Render ----------
-  let last = performance.now();
-  function step(now) {
-    const dt = clamp((now - last) / 16.6667, 0.5, 1.8);
+  // ---------- Event choreography ----------
+  let nextEvt=0, evtStart=0, evtDur=0;
+  function sched(now){
+    nextEvt = now + lerp(42000, 78000, Math.random()); // 42–78s
+    evtStart = 0; evtDur = 0;
+  }
+  function maybeEvt(now){
+    if(evtStart===0 && now>=nextEvt){
+      evtStart = now;
+      evtDur = lerp(3200, 5200, Math.random()); // 3.2–5.2s
+      buildMask();
+      sched(now);
+    }
+  }
+  function evtStrength(now){
+    if(evtStart===0) return 0;
+    const t=(now-evtStart)/evtDur;
+    if(t<=0||t>=1){ evtStart=0; return 0; }
+    const s=Math.sin(Math.PI*t);
+    return s*s;
+  }
+
+  // ---------- Render helpers ----------
+  function vignette(){
+    const g = x.createRadialGradient(W*0.5, H*0.52, Math.min(W,H)*0.12, W*0.5, H*0.52, Math.max(W,H)*0.82);
+    g.addColorStop(0, "rgba(0,0,0,0)");
+    g.addColorStop(1, "rgba(0,0,0,0.12)");
+    x.fillStyle=g; x.fillRect(0,0,W,H);
+  }
+
+  // ---------- Main loop ----------
+  let last=performance.now();
+  function loop(now){
+    const dt = clamp((now-last)/16.6667, 0.6, 1.6);
     last = now;
 
-    updatePointer();
-    maybeStartEvent(now);
-    const E = eventStrength(now); // 0..1
+    updPointer();
+    maybeEvt(now);
+    const E = evtStrength(now);
 
-    // Fade / trails
-    ctx.globalCompositeOperation = "source-over";
-    ctx.fillStyle = "rgba(5, 6, 10, 0.075)";
-    ctx.fillRect(0, 0, W, H);
+    // slow background fade (installation trails)
+    x.globalCompositeOperation="source-over";
+    x.fillStyle="rgba(4,5,10,0.10)";
+    x.fillRect(0,0,W,H);
 
-    // Subtle vignette (every few frames)
-    if ((now | 0) % 10 === 0) {
-      const g = ctx.createRadialGradient(W * 0.5, H * 0.52, Math.min(W, H) * 0.12, W * 0.5, H * 0.52, Math.max(W, H) * 0.75);
-      g.addColorStop(0, "rgba(0,0,0,0)");
-      g.addColorStop(1, "rgba(0,0,0,0.10)");
-      ctx.fillStyle = g;
-      ctx.fillRect(0, 0, W, H);
-    }
+    if((now|0)%10===0) vignette();
 
-    const calmRadius = Math.min(W, H) * 0.18;
-    const calmHard  = Math.min(W, H) * 0.06;
+    const centerX=W*0.5, centerY=H*0.52;
+    const phraseX=W*0.5, phraseY=H*0.46;
 
-    // Phrase anchor position in world space
-    const phraseX = W * 0.5;
-    const phraseY = H * 0.46;
+    // pointer calm radius
+    const calmR = Math.min(W,H)*0.16;
 
-    ctx.globalCompositeOperation = "lighter";
+    // draw: nodes as glowing points + occasional connective lines
+    x.globalCompositeOperation="lighter";
 
-    for (let i = 0; i < particles.length; i++) {
-      const p = particles[i];
+    // parameters: keep it slow and “expensive”
+    const t = now*0.001;
+    const ns = 0.0065;
+    const warp = 0.7 + 0.3*Math.sin(now*0.00011);
 
-      const ang = flowAngle(p.x, p.y, now);
-      const fx = Math.cos(ang), fy = Math.sin(ang);
+    // Pass 1: update + draw points
+    for(let idx=0; idx<nodes.length; idx++){
+      const p = nodes[idx];
 
-      // Calm around pointer
-      const dxp = p.x - pointer.x, dyp = p.y - pointer.y;
-      const d  = Math.hypot(dxp, dyp);
-      let calm = 0;
-      if (d < calmRadius) calm = smoothstep(1 - d / calmRadius);
-      let superCalm = 0;
-      if (d < calmHard) superCalm = smoothstep(1 - d / calmHard);
+      // base drift (noise field)
+      const n = fbm((p.x+200)*ns + t*0.07, (p.y-120)*ns - t*0.06);
+      const ang = n*TAU*1.1;
+      const vx = Math.cos(ang)*0.35*warp;
+      const vy = Math.sin(ang)*0.35*warp;
 
-      const breath = 0.6 + 0.4 * Math.sin(now * 0.00012);
-      const speed = p.sp * (0.62 + 0.38 * breath);
+      // calm near pointer (the installation “softens” when you approach)
+      const dxp = p.x - P.x, dyp = p.y - P.y;
+      const d = Math.hypot(dxp,dyp);
+      const calm = d<calmR ? ss(1-d/calmR) : 0;
 
-      const calmSlow = 1 - 0.72 * calm - 0.18 * superCalm;
+      // gentle composition pull keeps stage framed
+      const toC = 0.0009;
+      const cx = (centerX - p.x)*toC;
+      const cy = (centerY - p.y)*toC;
 
-      // Base flow force
-      let ax = fx * speed * calmSlow;
-      let ay = fy * speed * calmSlow;
-
-      // ---------- EVENT: phrase formation force ----------
-      if (E > 0.001 && maskData) {
-        // Map particle position into mask space around phrase anchor
-        const localX = (p.x - (phraseX - maskW * 0.5)) / maskW; // 0..1
-        const localY = (p.y - (phraseY - maskH * 0.5)) / maskH;
-
-        // If near text pixels, attract to that region softly
-        const a0 = maskAlpha(localX, localY);
-        if (a0 > 0.02) {
-          // approximate gradient by sampling neighbors (cheap)
-          const eps = 1 / maskW;
-          const gx = maskAlpha(localX + eps, localY) - maskAlpha(localX - eps, localY);
-          const gy = maskAlpha(localX, localY + eps) - maskAlpha(localX, localY - eps);
-
-          // pull “into ink”
-          const k = 0.9 * E; // strength
-          ax += (-gx) * k * 2.2;
-          ay += (-gy) * k * 2.2;
-
-          // slow down inside the word (quiet)
-          ax *= (1 - 0.35 * E);
-          ay *= (1 - 0.35 * E);
+      // phrase formation force during event
+      let fx=0, fy=0;
+      if(E>0.001 && mData){
+        const nx = (p.x - (phraseX - mW*0.5)) / mW;
+        const ny = (p.y - (phraseY - mH*0.5)) / mH;
+        const a0 = aMask(nx,ny);
+        if(a0>0.02){
+          const eps = 1/mW;
+          const gx = aMask(nx+eps,ny)-aMask(nx-eps,ny);
+          const gy = aMask(nx,ny+eps)-aMask(nx,ny-eps);
+          const k = 2.4*E;
+          fx += (-gx)*k;
+          fy += (-gy)*k;
         } else {
-          // gentle drift toward phrase region so the reveal can happen
-          const toX = (phraseX - p.x) * 0.00008 * E;
-          const toY = (phraseY - p.y) * 0.00008 * E;
-          ax += toX;
-          ay += toY;
+          fx += (phraseX - p.x)*0.00045*E;
+          fy += (phraseY - p.y)*0.00045*E;
         }
       }
 
-      // Damping
-      const damp = 0.865 + 0.07 * (1 - calm);
-      p.vx = p.vx * damp + ax * 0.36;
-      p.vy = p.vy * damp + ay * 0.36;
+      // integrate (very damped)
+      p.px += (vx + cx + fx) * (1 - 0.72*calm);
+      p.py += (vy + cy + fy) * (1 - 0.72*calm);
 
-      // Gentle global composition pull (keeps the scene “framed”)
-      const cx = W * 0.5, cy = H * 0.52;
-      p.vx += (cx - p.x) * 0.00018;
-      p.vy += (cy - p.y) * 0.00018;
+      // relax back to grid anchor (keeps geometry present)
+      const relax = 0.06 + 0.10*(1-E);
+      p.px += (p.x - p.px)*relax;
+      p.py += (p.y - p.py)*relax;
 
-      const ox = p.x, oy = p.y;
-      p.x += p.vx * dt;
-      p.y += p.vy * dt;
+      // tiny parallax depth
+      const zz = 0.6 + 0.4*p.z;
+      const px = p.px + (p.px-centerX)*(zz-1)*0.02;
+      const py = p.py + (p.py-centerY)*(zz-1)*0.02;
 
-      // Wrap
-      if (p.x < -20) p.x = W + 20;
-      if (p.x > W + 20) p.x = -20;
-      if (p.y < -20) p.y = H + 20;
-      if (p.y > H + 20) p.y = -20;
+      // luminance: stronger near phrase during event + near pointer
+      const localGlow = 0.25*calm + 0.9*E;
+      const alpha = clamp(0.05 + 0.09*zz + localGlow*0.10, 0.04, 0.22);
 
-      // Styling
-      const a = p.a * (0.62 + 0.55 * (1 - calm));
-      const hue = p.hue + 10 * calm + 10 * E;
-      ctx.strokeStyle = `hsla(${hue.toFixed(1)}, 60%, 72%, ${a.toFixed(3)})`;
-      ctx.lineWidth = p.w;
+      // cool “light installation” palette
+      const hue = 205 + 22*zz + 10*E + 12*Math.sin((p.phase+now)*0.00008);
+      x.fillStyle = `hsla(${hue.toFixed(1)}, 70%, 72%, ${alpha.toFixed(3)})`;
 
-      const vx = p.vx, vy = p.vy;
-      const vmag = Math.max(0.0001, Math.hypot(vx, vy));
-      const nx = vx / vmag, ny = vy / vmag;
-
-      // In the event, strokes become slightly shorter (more "ink-like")
-      const baseLen = (2.2 + 5.2 * (1 - calm)) * (0.7 + 0.3 * breath);
-      const strokeLen = baseLen * (1 - 0.25 * E);
-
-      ctx.beginPath();
-      ctx.moveTo(ox, oy);
-      ctx.lineTo(ox - nx * strokeLen, oy - ny * strokeLen);
-      ctx.stroke();
+      const r = clamp(0.7 + 1.3*zz + 1.0*calm + 0.8*E, 0.7, 3.0);
+      x.beginPath();
+      x.arc(px,py,r,0,TAU);
+      x.fill();
     }
 
-    // Subtle halo around pointer (presence)
-    const halo = ctx.createRadialGradient(pointer.x, pointer.y, 0, pointer.x, pointer.y, calmRadius * 0.9);
-    halo.addColorStop(0, "rgba(255,255,255,0.03)");
-    halo.addColorStop(1, "rgba(255,255,255,0)");
-    ctx.globalCompositeOperation = "screen";
-    ctx.fillStyle = halo;
-    ctx.fillRect(pointer.x - calmRadius, pointer.y - calmRadius, calmRadius * 2, calmRadius * 2);
-
-    // Very light film grain (materiality)
-    if ((now | 0) % 2 === 0) {
-      ctx.globalCompositeOperation = "overlay";
-      ctx.globalAlpha = 0.08;
-      for (let k = 0; k < 140; k++) {
-        const x = Math.random() * W;
-        const y = Math.random() * H;
-        const s = Math.random() < 0.92 ? 1 : 2;
-        ctx.fillStyle = `rgba(255,255,255,${Math.random() * 0.08})`;
-        ctx.fillRect(x, y, s, s);
+    // Pass 2: sparse lines (makes it feel like an installation network)
+    // Only draw a subset each frame so it stays airy.
+    const stride = Math.floor(clamp(nodes.length/280, 2, 6));
+    x.lineWidth = 1;
+    for(let k=0; k<nodes.length; k+=stride){
+      const p = nodes[k];
+      // connect to right neighbor (grid topology) with probability
+      if(Math.random() < (0.06 + 0.12*E)){
+        const i = k % cols;
+        if(i < cols-1){
+          const q = nodes[k+1];
+          const a = 0.015 + 0.05*E;
+          x.strokeStyle = `rgba(255,255,255,${a.toFixed(3)})`;
+          x.beginPath();
+          x.moveTo(p.px,p.py);
+          x.lineTo(q.px,q.py);
+          x.stroke();
+        }
       }
-      ctx.globalAlpha = 1;
     }
 
-    requestAnimationFrame(step);
+    // subtle halo around pointer (presence)
+    const halo = x.createRadialGradient(P.x,P.y,0,P.x,P.y,calmR*1.1);
+    halo.addColorStop(0,"rgba(255,255,255,0.030)");
+    halo.addColorStop(1,"rgba(255,255,255,0)");
+    x.globalCompositeOperation="screen";
+    x.fillStyle=halo;
+    x.fillRect(P.x-calmR*1.2, P.y-calmR*1.2, calmR*2.4, calmR*2.4);
+
+    // materiality: very light grain
+    if((now|0)%2===0){
+      x.globalCompositeOperation="overlay";
+      x.globalAlpha=0.07;
+      for(let g=0; g<120; g++){
+        const gx=Math.random()*W, gy=Math.random()*H;
+        const s=Math.random()<0.94?1:2;
+        x.fillStyle=`rgba(255,255,255,${Math.random()*0.07})`;
+        x.fillRect(gx,gy,s,s);
+      }
+      x.globalAlpha=1;
+    }
+
+    requestAnimationFrame(loop);
   }
 
-  // Init
+  // ---------- Init ----------
   resize();
-  pointer.x = pointer.tx = W * 0.5;
-  pointer.y = pointer.ty = H * 0.55;
-  rebuildMask();
-  initParticles();
+  P.x = P.tx = W*0.5;
+  P.y = P.ty = H*0.55;
+  buildGrid();
+  buildMask();
+  sched(performance.now());
 
-  // Event schedule
-  scheduleNext(performance.now());
-
-  // Start
-  ctx.fillStyle = "#05060a";
-  ctx.fillRect(0, 0, W, H);
-  requestAnimationFrame(step);
+  x.fillStyle="#04050a";
+  x.fillRect(0,0,W,H);
+  requestAnimationFrame(loop);
 })();
