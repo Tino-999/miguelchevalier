@@ -500,9 +500,7 @@ function drawHUD() {
   fill(0, 0, 0, 0.18);
   rect(pad - 8, pad - 8, 330 * s, 56 * s, 10);
 
-  fill(0, 0, 100, 0.86);
-  textSize(14 * s);
-  text(`Alpine Story — ${textA}`, pad, pad);
+
 
   fill(0, 0, 100, 0.66);
   textSize(12 * s);
