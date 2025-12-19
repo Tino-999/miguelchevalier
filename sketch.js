@@ -1,18 +1,18 @@
-// Storyboard Generative Scene — p5.js (mobile-first)
-// Tap: skip to next scene / fast-forward current
-// Swipe: wind (affects cloud/rain/water a bit)
+// "Hiersein ist herrlich" — Generative Light Garden (p5.js)
+// Inspired by immersive, luminous, algorithmic installation aesthetics (Miguel Chevalier vibe).
+// Touch: Tap = new composition, Drag = bend the field (wind), Two-finger = amplify pulse.
 
 let seed = 0;
-let wind = 0;
+let t0 = 0;
 
-let scene = 0;
-let sceneStart = 0;
+let flow = [];
+let particles = [];
+let blooms = [];
 
-let lake;
-let swimmer;
-let cloud;
-let carousel;
-let tower;
+let windX = 0;
+let windY = 0;
+
+let pulseBoost = 0;
 
 function setup() {
   createCanvas(windowWidth, windowHeight);
@@ -31,637 +31,293 @@ function reseed() {
   seed = (Date.now() ^ (Math.random() * 1e9)) >>> 0;
   randomSeed(seed);
   noiseSeed(seed);
+  t0 = random(1000);
 
-  wind = 0;
-  scene = 0;
-  sceneStart = frameCount;
+  windX = 0;
+  windY = 0;
+  pulseBoost = 0;
 
-  lake = { rip: random(1000) };
-  swimmer = { phase: random(TAU), x0: random(-0.25, 0.25) };
-  cloud = { x: -200, y: height * 0.18, vx: 1.5, raining: false, gone: false };
-  carousel = { ang: 0 };
-  tower = { grow: 0 };
+  // flow grid
+  const cell = max(18, floor(min(width, height) / 40));
+  const cols = floor(width / cell) + 2;
+  const rows = floor(height / cell) + 2;
+  flow = { cell, cols, rows, a: new Array(cols * rows).fill(0) };
+
+  // blooms (soft luminous “flowers”)
+  blooms = [];
+  const B = floor(map(min(width, height), 320, 1400, 10, 26, true));
+  for (let i = 0; i < B; i++) blooms.push(makeBloom());
+
+  // particles (light filaments)
+  particles = [];
+  const N = floor(map(min(width, height), 320, 1400, 1800, 5200, true));
+  for (let i = 0; i < N; i++) particles.push(makeParticle());
+
+  background(230, 20, 3);
 }
 
-// ---------------- Input ----------------
+// ---------------------- Input (mobile-first) ----------------------
+function touchStarted() {
+  if (touches && touches.length >= 2) pulseBoost = 1.0;
+  return false;
+}
+
 function touchMoved() {
-  wind += constrain(movedX * 0.03, -1.4, 1.4);
+  windX += constrain(movedX * 0.02, -1.2, 1.2);
+  windY += constrain(movedY * 0.02, -1.2, 1.2);
   return false;
 }
+
 function touchEnded() {
-  skipOrNext();
+  // quick tap -> reseed
+  if (abs(movedX) < 2 && abs(movedY) < 2) reseed();
+  pulseBoost = 0.0;
   return false;
 }
+
 function mousePressed() {
-  skipOrNext();
+  reseed();
+}
+function mouseDragged() {
+  windX += constrain(movedX * 0.015, -1.0, 1.0);
+  windY += constrain(movedY * 0.015, -1.0, 1.0);
 }
 
-function skipOrNext() {
-  const p = sceneProgress();
-  if (p < 0.92) {
-    // fast-forward current scene
-    sceneStart -= 999999;
-  } else {
-    // next scene
-    if (scene < 10) {
-      scene++;
-      sceneStart = frameCount;
-    } else {
-      reseed();
-    }
-  }
-}
-
-function sceneProgress() {
-  const m = min(width, height);
-  const speed = map(m, 320, 1400, 1.2, 0.85, true);
-  const durations = [240, 260, 260, 260, 270, 300, 280, 320, 300, 320, 340];
-  const dur = durations[constrain(scene, 0, durations.length - 1)] * speed;
-  return constrain((frameCount - sceneStart) / dur, 0, 1);
-}
-
-// --------------- Draw ---------------
+// ---------------------- Draw loop ----------------------
 function draw() {
-  wind *= 0.965;
-  wind = constrain(wind, -10, 10);
+  // soft persistence for luminous trails
+  background(230, 20, 3, 0.10);
 
-  // Determine global day/night factor based on scene (night arrives later)
-  const nightTarget = (scene >= 7) ? 1 : 0;
-  const nightMix = smoothstep(nightTarget ? mapSceneMix(7, 8) : 0); // 0..1
-  drawSky(nightMix);
+  // decay wind
+  windX *= 0.965;
+  windY *= 0.965;
+  windX = constrain(windX, -8, 8);
+  windY = constrain(windY, -8, 8);
 
-  // Matterhorn always (first thing)
-  drawMatterhorn(mapSceneMix(0, 1));
+  const t = t0 + frameCount * 0.007;
 
-  // Sun rises (scene 1+)
-  if (scene >= 1) drawSun(mapSceneMix(1, 2), nightMix);
+  // pulse (breathing)
+  const pulse = 0.55 + 0.45 * sin(frameCount * 0.045 + t0);
+  const amp = (0.85 + 0.55 * pulse) * (1.0 + 0.85 * pulseBoost);
 
-  // Lake appears (scene 2+)
-  if (scene >= 2) drawLake(mapSceneMix(2, 3), nightMix);
+  updateFlow(t, amp);
+  drawBlooms(t, amp);
+  drawFilaments(t, amp);
 
-  // Swimmer (scene 3+)
-  if (scene >= 3) drawSwimmer(mapSceneMix(3, 4));
-
-  // Oktoberfest tent (scene 4+)
-  if (scene >= 4) drawTent(mapSceneMix(4, 5));
-
-  // Bavarian schuhplattler dancer (scene 5+)
-  if (scene >= 5) drawDancer(mapSceneMix(5, 6));
-
-  // Big oak (scene 6+)
-  if (scene >= 6) drawOak(mapSceneMix(6, 7), nightMix);
-
-  // Cloud flies in, rains over oak, then leaves (scene 7+)
-  if (scene >= 7) drawCloudAndRain(mapSceneMix(7, 9), nightMix);
-
-  // Night + moon rises (scene 8+)
-  if (scene >= 8) drawMoon(mapSceneMix(8, 9), nightMix);
-
-  // Carousel with white elephant (scene 9+)
-  if (scene >= 9) drawCarousel(mapSceneMix(9, 10), nightMix);
-
-  // Tower forms (scene 10)
-  if (scene >= 10) drawTower(mapSceneMix(10, 11), nightMix);
-
+  drawMotto(t, amp);
   drawHUD();
 }
 
-// Helper: returns a smooth 0..1 fade for a scene interval [a..b]
-function mapSceneMix(a, b) {
-  if (scene < a) return 0;
-  if (scene > b) return 1;
-  // if scene == a use its progress; if between, treat as 1
-  if (scene === a) return smoothstep(sceneProgress());
-  if (scene === b) return 0; // will be driven by next call
-  return 1;
-}
+// ---------------------- Flow field ----------------------
+function updateFlow(t, amp) {
+  const { cols, rows } = flow;
+  const s = 0.006;
+  for (let y = 0; y < rows; y++) {
+    for (let x = 0; x < cols; x++) {
+      const nx = x * s;
+      const ny = y * s;
 
-// ---------------- Visuals ----------------
-function drawSky(nightMix) {
-  noStroke();
-  for (let y = 0; y < height; y += 3) {
-    const t = y / height;
+      // layered noise -> swirling vectors
+      const n1 = noise(nx, ny, t * 0.7);
+      const n2 = noise(nx * 1.7 + 20, ny * 1.7 + 20, t * 1.05);
 
-    // day gradient
-    const hDayTop = 205, sDayTop = 40, bDayTop = 36;
-    const hDayHor = 195, sDayHor = 20, bDayHor = 48;
+      let ang = (n1 * TAU * 2.0) + (n2 - 0.5) * 1.3;
 
-    // night gradient
-    const hNigTop = 235, sNigTop = 55, bNigTop = 10;
-    const hNigHor = 230, sNigHor = 45, bNigHor = 14;
+      // gentle wind bend (stronger near top = like air)
+      const topBias = 1.0 - (y / rows);
+      ang += (windX * 0.02) * topBias;
+      ang += (windY * 0.02) * topBias;
 
-    const hTop = lerp(hDayTop, hNigTop, nightMix);
-    const sTop = lerp(sDayTop, sNigTop, nightMix);
-    const bTop = lerp(bDayTop, bNigTop, nightMix);
+      // pulse adds subtle precession
+      ang += sin(t * 0.6 + x * 0.12 + y * 0.08) * 0.08 * amp;
 
-    const hHor = lerp(hDayHor, hNigHor, nightMix);
-    const sHor = lerp(sDayHor, sNigHor, nightMix);
-    const bHor = lerp(bDayHor, bNigHor, nightMix);
-
-    const e = pow(t, 1.7);
-    fill(lerp(hTop, hHor, e), lerp(sTop, sHor, e), lerp(bTop, bHor, e), 1);
-    rect(0, y, width, 3);
-  }
-
-  // stars at night
-  if (nightMix > 0.25) {
-    const a = 0.22 * (nightMix - 0.25) / 0.75;
-    stroke(0, 0, 100, a);
-    strokeWeight(1);
-    const n = floor(map(min(width, height), 320, 1400, 70, 220, true));
-    randomSeed(seed + 12345);
-    for (let i = 0; i < n; i++) {
-      const x = random(width);
-      const y = random(height * 0.55);
-      point(x, y);
+      flow.a[x + y * cols] = ang;
     }
   }
 }
 
-function drawMatterhorn(intro) {
-  // silhouette mountain with slight highlight later
-  const horizon = height * 0.62;
-  const baseY = horizon + 90 * (1 - intro);
-  const peakX = width * 0.46;
-  const peakY = horizon - 210 * intro;
-  const leftX = width * 0.18;
-  const rightX = width * 0.74;
+// ---------------------- Particles / Filaments ----------------------
+function makeParticle() {
+  const m = min(width, height);
+  const w = random(0.7, 2.0) * map(m, 320, 1400, 1.6, 1.0, true);
+  const hue = random([345, 10, 28, 45, 135, 165, 190, 205, 315]); // festive-ish, but abstract
+  return {
+    x: random(width),
+    y: random(height),
+    vx: 0,
+    vy: 0,
+    w,
+    hue,
+    sat: random(55, 95),
+    bri: random(65, 100),
+    a: random(0.03, 0.12),
+    life: floor(random(120, 520)),
+    phase: random(TAU)
+  };
+}
 
-  // glow
-  noFill();
-  for (let k = 7; k >= 1; k--) {
-    stroke(220, 30, 100, 0.012 * intro);
-    strokeWeight(k * 10);
-    beginShape();
-    vertex(leftX, baseY);
-    vertex(peakX, peakY);
-    vertex(rightX, baseY);
-    endShape();
+function drawFilaments(t, amp) {
+  const { cell, cols } = flow;
+
+  for (let p of particles) {
+    const px = p.x;
+    const py = p.y;
+
+    // sample flow angle
+    const gx = floor(px / cell);
+    const gy = floor(py / cell);
+    const idx = constrain(gx, 0, cols - 1) + constrain(gy, 0, flow.rows - 1) * cols;
+    const ang = flow.a[idx] ?? 0;
+
+    // step
+    const sp = (0.7 + 1.6 * noise(px * 0.004, py * 0.004, t)) * (0.55 + 0.65 * amp);
+    const ax = cos(ang) * sp + windX * 0.03;
+    const ay = sin(ang) * sp + windY * 0.03;
+
+    p.vx = p.vx * 0.86 + ax * 0.34;
+    p.vy = p.vy * 0.86 + ay * 0.34;
+
+    const nx = px + p.vx;
+    const ny = py + p.vy;
+
+    // color modulation
+    const glint = noise(px * 0.006, py * 0.006, t * 0.9);
+    let h = (p.hue + 20 * sin(t + p.phase)) % 360;
+    if (glint > 0.90) h = (200 + 120 * (glint - 0.90) / 0.10) % 360;
+
+    const a = p.a * (0.6 + 0.9 * amp) * (0.7 + 0.7 * glint);
+    const w = p.w * (0.9 + 0.5 * amp);
+
+    // luminous stroke: glow + core
+    strokeWeight(w * 2.4);
+    stroke(h, p.sat * 0.55, 100, a * 0.10);
+    line(px, py, nx, ny);
+
+    strokeWeight(w);
+    stroke(h, p.sat, p.bri, a);
+    line(px, py, nx, ny);
+
+    // occasional star-cross
+    if (glint > 0.93 && (frameCount % 2 === 0)) {
+      strokeWeight(1);
+      stroke(h, 35, 100, a * 0.30);
+      const s = 8 * (0.8 + 0.6 * amp);
+      line(nx - s, ny, nx + s, ny);
+      line(nx, ny - s, nx, ny + s);
+    }
+
+    p.x = nx;
+    p.y = ny;
+
+    // wrap
+    if (p.x < -10) p.x = width + 10;
+    if (p.x > width + 10) p.x = -10;
+    if (p.y < -10) p.y = height + 10;
+    if (p.y > height + 10) p.y = -10;
+
+    // respawn
+    p.life--;
+    if (p.life <= 0) {
+      p.x = random(width);
+      p.y = random(height);
+      p.vx = 0;
+      p.vy = 0;
+      p.life = floor(random(140, 620));
+      p.hue = random([345, 10, 28, 45, 135, 165, 190, 205, 315]);
+      p.phase = random(TAU);
+    }
   }
+}
 
-  // body
-  noStroke();
-  fill(225, 22, 12, 1);
-  beginShape();
-  vertex(0, height);
-  vertex(leftX, baseY);
-  vertex(peakX, peakY);
-  vertex(rightX, baseY);
-  vertex(width, height);
-  endShape(CLOSE);
+// ---------------------- Blooms (soft “garden lights”) ----------------------
+function makeBloom() {
+  const m = min(width, height);
+  const r = random(35, 120) * map(m, 320, 1400, 1.4, 1.0, true);
+  const hue = random([350, 0, 15, 35, 160, 185, 205, 310]);
+  return {
+    x: random(width),
+    y: random(height),
+    r,
+    hue,
+    phase: random(TAU),
+    drift: random(0.15, 0.9),
+    alpha: random(0.05, 0.16)
+  };
+}
 
-  // snow cap hint (subtle)
-  if (intro > 0.5) {
-    stroke(0, 0, 100, 0.10 * (intro - 0.5) / 0.5);
-    strokeWeight(2);
+function drawBlooms(t, amp) {
+  for (let b of blooms) {
+    // slow drift
+    const n1 = noise(b.x * 0.0018, b.y * 0.0018, t * 0.35);
+    const n2 = noise(b.x * 0.0018 + 10, b.y * 0.0018 + 10, t * 0.35);
+    b.x = (b.x + (n1 - 0.5) * 0.8 * b.drift + windX * 0.04 + width) % width;
+    b.y = (b.y + (n2 - 0.5) * 0.6 * b.drift + windY * 0.04 + height) % height;
+
+    const rr = b.r * (0.85 + 0.25 * sin(t * 1.2 + b.phase)) * (0.85 + 0.35 * amp);
+    const a = b.alpha * (0.7 + 0.7 * amp);
+
     noFill();
-    beginShape();
-    vertex(peakX - 30, peakY + 55);
-    vertex(peakX, peakY + 40);
-    vertex(peakX + 40, peakY + 70);
-    endShape();
-  }
-}
-
-function drawSun(p, nightMix) {
-  const horizon = height * 0.62;
-  const x = width * 0.58;
-  const y = lerp(horizon + 80, horizon - 120, smoothstep(p));
-  const r = min(width, height) * 0.055 * (0.75 + 0.35 * p) * (1 - 0.9 * nightMix);
-
-  if (nightMix > 0.6) return;
-
-  noStroke();
-  for (let i = 10; i >= 1; i--) {
-    fill(38, 75, 100, 0.012 * i * p);
-    circle(x, y, r * (1 + i * 0.28));
-  }
-  fill(38, 80, 100, 0.9);
-  circle(x, y, r * 1.1);
-}
-
-function drawLake(p, nightMix) {
-  const horizon = height * 0.62;
-  const y0 = horizon + 60;
-  const y1 = height * 0.92;
-
-  // lake shape
-  noStroke();
-  const h = lerp(200, 220, nightMix);
-  const s = lerp(45, 35, nightMix);
-  const b = lerp(22, 12, nightMix);
-
-  fill(h, s, b, 0.90 * p);
-  beginShape();
-  vertex(0, y0);
-  vertex(width, y0);
-  vertex(width, y1);
-  vertex(0, y1);
-  endShape(CLOSE);
-
-  // ripples
-  stroke(h, s, 55, 0.10 * p);
-  strokeWeight(1.2);
-  lake.rip += 0.01;
-  for (let i = 0; i < 24; i++) {
-    const yy = y0 + i * (y1 - y0) / 24;
-    const amp = (2 + i * 0.25) * p;
-    beginShape();
-    for (let x = 0; x <= width; x += 18) {
-      const n = noise(x * 0.01, yy * 0.01, lake.rip);
-      const wv = sin(x * 0.02 + lake.rip * 2 + i) * amp + (n - 0.5) * amp;
-      curveVertex(x, yy + wv + wind * 0.05);
+    for (let k = 5; k >= 1; k--) {
+      stroke(b.hue, 70, 100, a * 0.08);
+      strokeWeight(k * 7);
+      circle(b.x, b.y, rr * (1 + k * 0.22));
     }
-    endShape();
+    stroke(b.hue, 75, 100, a * 0.12);
+    strokeWeight(1.2);
+    circle(b.x, b.y, rr * 0.6);
   }
 }
 
-function drawSwimmer(p) {
-  const horizon = height * 0.62;
-  const y0 = horizon + 60;
-  const y1 = height * 0.92;
-
-  const t = frameCount * 0.03 + swimmer.phase;
-  const x = width * (0.48 + swimmer.x0) + sin(t * 0.7) * 120;
-  const y = lerp(y1, y0 + (y1 - y0) * 0.35, p) + sin(t) * 4;
-
-  // little wake
-  stroke(0, 0, 100, 0.10 * p);
-  strokeWeight(2);
-  noFill();
-  arc(x - 10, y + 12, 40, 16, 0.1 * PI, 0.9 * PI);
-  arc(x + 10, y + 12, 40, 16, 0.1 * PI, 0.9 * PI);
-
-  // swimmer stick-ish
-  stroke(0, 0, 100, 0.55 * p);
-  strokeWeight(3);
-  // head
-  point(x, y);
-  // arms splashing
-  line(x - 18, y + 6, x - 2, y + 14);
-  line(x + 18, y + 6, x + 2, y + 14);
-}
-
-function drawTent(p) {
-  const groundY = height * 0.78;
-  const x = width * 0.22;
-  const w = min(width, height) * 0.30;
-  const h = min(width, height) * 0.16;
-
-  const g = smoothstep(p);
-
-  // glow
-  for (let k = 6; k >= 1; k--) {
-    stroke(50, 25, 100, 0.01 * g);
-    strokeWeight(k * 8);
-    noFill();
-    tentOutline(x, groundY, w * g, h * g);
-  }
-
-  // body
-  noStroke();
-  fill(210, 30, 22, 0.65 * g);
-  tentBody(x, groundY, w * g, h * g);
-
-  // stripes
-  stroke(0, 0, 100, 0.18 * g);
-  strokeWeight(3);
-  for (let i = -4; i <= 4; i++) {
-    const xx = x + i * (w * 0.10) * g;
-    line(xx, groundY - h * g, xx, groundY);
-  }
-
-  // banner
-  noStroke();
-  fill(45, 55, 100, 0.22 * g);
-  rect(x - w * 0.20 * g, groundY - h * 1.05 * g, w * 0.40 * g, h * 0.25 * g, 10);
-}
-
-function tentOutline(x, groundY, w, h) {
-  beginShape();
-  vertex(x - w * 0.55, groundY);
-  vertex(x - w * 0.40, groundY - h);
-  vertex(x, groundY - h * 1.15);
-  vertex(x + w * 0.40, groundY - h);
-  vertex(x + w * 0.55, groundY);
-  endShape(CLOSE);
-}
-function tentBody(x, groundY, w, h) {
-  beginShape();
-  vertex(x - w * 0.55, groundY);
-  vertex(x - w * 0.40, groundY - h);
-  vertex(x, groundY - h * 1.15);
-  vertex(x + w * 0.40, groundY - h);
-  vertex(x + w * 0.55, groundY);
-  endShape(CLOSE);
-}
-
-function drawDancer(p) {
-  const g = smoothstep(p);
-  const groundY = height * 0.78;
-  const x = width * 0.40;
-  const y = groundY;
-
-  const t = frameCount * 0.06;
-  const bounce = sin(t) * 6 * g;
-  const clap = 0.5 + 0.5 * sin(t * 1.7);
-
-  // simple “schuhplattler” stick figure with moving arms/legs
-  stroke(0, 0, 100, 0.55 * g);
-  strokeWeight(4);
-
-  const headY = y - 95 * g + bounce;
-  point(x, headY);
-
-  // body
-  line(x, headY + 10, x, y - 40 * g + bounce);
-
-  // arms clapping thighs
-  const armA = lerp(0.2, 1.0, clap);
-  line(x, headY + 25, x - 35 * g, headY + (55 + 20 * armA) * g);
-  line(x, headY + 25, x + 35 * g, headY + (55 + 20 * armA) * g);
-
-  // legs kicking
-  const kick = sin(t * 1.2);
-  line(x, y - 40 * g + bounce, x - (18 + 22 * kick) * g, y + (-5 + 18 * abs(kick)) * g);
-  line(x, y - 40 * g + bounce, x + (18 + 22 * -kick) * g, y + (-5 + 18 * abs(kick)) * g);
-
-  // hat
-  strokeWeight(3);
-  line(x - 18 * g, headY - 10 * g, x + 18 * g, headY - 10 * g);
-}
-
-function drawOak(p, nightMix) {
-  const g = smoothstep(p);
-  const groundY = height * 0.78;
-  const x = width * 0.78;
-
-  const trunkH = min(width, height) * 0.28 * g;
-  const trunkW = min(width, height) * 0.03;
-
-  // trunk glow + trunk
-  for (let k = 6; k >= 1; k--) {
-    stroke(45, 25, 100, 0.010 * g);
-    strokeWeight(k * 9);
-    line(x, groundY, x, groundY - trunkH);
-  }
-  stroke(28, 35, 25, 0.70 * g);
-  strokeWeight(6);
-  line(x, groundY, x, groundY - trunkH);
-
-  // branches
-  strokeWeight(4);
-  const by = groundY - trunkH * 0.65;
-  line(x, by, x - 60 * g, by - 45 * g);
-  line(x, by, x + 70 * g, by - 35 * g);
-
-  // canopy
-  noStroke();
-  const hue = lerp(120, 130, nightMix);
-  for (let i = 9; i >= 1; i--) {
-    fill(hue, 45, lerp(28, 18, nightMix), 0.05 * g);
-    circle(x + wind * 0.15 * i, groundY - trunkH - 30 * g, (120 + i * 35) * g);
-  }
-  for (let i = 0; i < 10; i++) {
-    const ox = (noise(seed + i * 9) - 0.5) * 140 * g + wind * 0.8;
-    const oy = (noise(seed + i * 13) - 0.5) * 90 * g;
-    fill(hue + random(-6, 6), 55, lerp(35, 20, nightMix), 0.22 * g);
-    circle(x + ox, groundY - trunkH - 40 * g + oy, (60 + 40 * noise(i * 2)) * g);
-  }
-}
-
-function drawCloudAndRain(p, nightMix) {
-  // p goes 0..1 across scenes 7..9
-  // phase: fly in (0..0.35), rain (0.35..0.7), fly out (0.7..1)
-  const inP = smoothstep(map(p, 0.00, 0.35, 0, 1, true));
-  const rainP = smoothstep(map(p, 0.35, 0.70, 0, 1, true));
-  const outP = smoothstep(map(p, 0.70, 1.00, 0, 1, true));
-
-  const xIn = lerp(-220, width * 0.78, inP);
-  const xOut = lerp(width * 0.78, width + 260, outP);
-  const x = (p < 0.70) ? xIn : xOut;
-  const y = height * 0.17 + sin(frameCount * 0.01) * 6;
-
-  // cloud
-  noStroke();
-  const a = 0.16 + 0.16 * (1 - nightMix);
-  for (let i = 0; i < 7; i++) {
-    const ox = (i - 3) * 40 + noise(seed + i * 10, frameCount * 0.01) * 12;
-    const oy = noise(seed + i * 20, frameCount * 0.01) * 10;
-    const rr = 95 + noise(seed + i * 30) * 40;
-    fill(0, 0, 100, a * (0.75 - i * 0.06));
-    circle(x + ox + wind * 0.6, y + oy, rr);
-  }
-
-  // rain over oak (center at oak x)
-  if (rainP > 0.02) {
-    const oakX = width * 0.78;
-    const top = y + 40;
-    const bottom = height * 0.80;
-    stroke(205, 30, 100, 0.12 * rainP);
-    strokeWeight(2);
-    for (let i = 0; i < 70; i++) {
-      const rx = oakX + (noise(seed + i * 3, frameCount * 0.02) - 0.5) * 220 + wind * 1.5;
-      const ry = top + noise(seed + i * 7, frameCount * 0.02) * (bottom - top);
-      line(rx, ry, rx + wind * 0.2, ry + 22);
-    }
-  }
-}
-
-function drawMoon(p, nightMix) {
-  if (nightMix < 0.2) return;
-  const x = width * 0.62;
-  const horizon = height * 0.62;
-  const y = lerp(horizon + 90, height * 0.16, smoothstep(p));
-  const r = min(width, height) * 0.05;
-
-  noStroke();
-  fill(60, 10, 100, 0.22 * nightMix);
-  circle(x, y, r * 2.6);
-
-  fill(60, 12, 100, 0.85 * nightMix);
-  circle(x, y, r * 2.0);
-
-  // crescent cut
-  fill(235, 55, 10, 1); // match night sky tone-ish
-  circle(x + r * 0.55, y - r * 0.15, r * 1.8);
-}
-
-function drawCarousel(p, nightMix) {
-  const g = smoothstep(p);
-  const groundY = height * 0.78;
-  const x = width * 0.50;
-  const y = groundY;
-
-  // rotate
-  carousel.ang += 0.02 * (0.3 + 0.7 * g);
-
-  // base
-  noStroke();
-  fill(300, 20, 18, 0.65 * g);
-  rect(x - 140 * g, y - 20 * g, 280 * g, 30 * g, 12);
-
-  // canopy
-  fill(45, 55, 100, 0.18 * g);
-  ellipse(x, y - 140 * g, 320 * g, 140 * g);
-
-  // poles
-  stroke(0, 0, 100, 0.18 * g);
-  strokeWeight(3);
-  for (let i = 0; i < 8; i++) {
-    const a = (i / 8) * TAU + carousel.ang;
-    const px = x + cos(a) * 110 * g;
-    line(px, y - 20 * g, px, y - 130 * g);
-  }
-
-  // white elephant on carousel (simple, readable)
-  const ex = x + cos(carousel.ang) * 110 * g;
-  const ey = y - 55 * g + sin(carousel.ang) * 8;
-
-  drawElephant(ex, ey, 0.9 * g, nightMix);
-}
-
-function drawElephant(x, y, s, nightMix) {
+// ---------------------- Motto (“Hiersein ist herrlich”) ----------------------
+function drawMotto(t, amp) {
+  // Draw the motto as a subtle, shifting luminous typographic presence.
+  // We avoid heavy fonts: simple canvas text with glow.
   push();
-  translate(x, y);
-  scale(s);
+  resetMatrix();
+  textAlign(CENTER, CENTER);
 
-  // glow
-  for (let k = 5; k >= 1; k--) {
-    stroke(0, 0, 100, 0.02);
-    strokeWeight(k * 6);
-    noFill();
-    elephantShape();
+  const m = min(width, height);
+  const s = map(m, 320, 1400, 1.2, 1.0, true);
+
+  const x = width * 0.5;
+  const y = height * 0.84;
+
+  const wob = 1.5 * sin(t * 0.9) + 0.8 * sin(t * 1.7);
+  const hue = (340 + 30 * sin(t * 0.6)) % 360;
+
+  const msg = "hiersein ist herrlich";
+
+  // glow layers
+  for (let i = 8; i >= 1; i--) {
+    const a = 0.018 * i * (0.8 + 0.4 * amp);
+    fill(hue, 25, 100, a * 0.10);
+    textSize((26 + i * 1.2) * s);
+    text(msg, x + wob, y);
   }
 
-  // body
-  stroke(0, 0, 100, 0.55);
-  strokeWeight(3);
-  fill(0, 0, 100, 0.10 + 0.10 * nightMix);
-  elephantShapeFilled();
+  // core
+  fill(hue, 18, 100, 0.35 + 0.20 * amp);
+  textSize(28 * s);
+  text(msg, x + wob, y);
 
-  // eye
-  noStroke();
-  fill(0, 0, 100, 0.45);
-  circle(18, -10, 4);
-  pop();
-}
-
-function elephantShape() {
-  // outline-ish
-  beginShape();
-  // body
-  vertex(-30, 0);
-  vertex(-28, -18);
-  vertex(-10, -28);
-  vertex(18, -26);
-  vertex(34, -14);
-  vertex(32, 6);
-  vertex(-30, 6);
-  endShape(CLOSE);
-
-  // trunk
-  beginShape();
-  vertex(34, -10);
-  vertex(46, -6);
-  vertex(50, 6);
-  vertex(42, 14);
-  vertex(36, 8);
-  endShape(CLOSE);
-}
-
-function elephantShapeFilled() {
-  // body
-  beginShape();
-  vertex(-30, 0);
-  vertex(-28, -18);
-  vertex(-10, -28);
-  vertex(18, -26);
-  vertex(34, -14);
-  vertex(32, 6);
-  vertex(-30, 6);
-  endShape(CLOSE);
-
-  // legs
-  rect(-22, 6, 10, 16, 4);
-  rect(-4, 6, 10, 16, 4);
-  rect(14, 6, 10, 16, 4);
-
-  // ear
-  ellipse(14, -12, 18, 16);
-
-  // trunk
-  beginShape();
-  vertex(34, -10);
-  vertex(46, -6);
-  vertex(50, 6);
-  vertex(42, 14);
-  vertex(36, 8);
-  endShape(CLOSE);
-}
-
-function drawTower(p, nightMix) {
-  const g = smoothstep(p);
-  const groundY = height * 0.78;
-  const x = width * 0.90;
-  const w = min(width, height) * 0.07;
-  const h = min(width, height) * 0.52 * g;
-
-  push();
-  translate(x, groundY);
-
-  // glow
-  for (let k = 7; k >= 1; k--) {
-    stroke(190, 25, 100, 0.010 * g);
-    strokeWeight(k * 9);
-    noFill();
-    towerOutline(w, h);
-  }
-
-  // body
-  stroke(200, 15, 85, 0.45);
-  strokeWeight(2.2);
-  fill(210, 10, lerp(18, 10, nightMix), 0.70 * g);
-  towerBody(w, h);
-
-  // top beacon
-  if (p > 0.65) {
-    const a = 0.12 + 0.10 * sin(frameCount * 0.08);
-    noStroke();
-    fill(50, 60, 100, a);
-    circle(0, -h - 18, 18);
-  }
+  // tiny underline sparkle (like a signature)
+  stroke(hue, 40, 100, 0.10 + 0.08 * amp);
+  strokeWeight(1);
+  const w = textWidth(msg) * 0.55;
+  line(x - w, y + 20 * s, x + w, y + 20 * s);
 
   pop();
 }
 
-function towerOutline(w, h) {
-  beginShape();
-  vertex(-w, 0);
-  vertex(-w * 0.75, -h);
-  vertex(0, -h - 28);
-  vertex(w * 0.75, -h);
-  vertex(w, 0);
-  endShape(CLOSE);
-}
-function towerBody(w, h) {
-  beginShape();
-  vertex(-w, 0);
-  vertex(-w * 0.75, -h);
-  vertex(0, -h - 28);
-  vertex(w * 0.75, -h);
-  vertex(w, 0);
-  endShape(CLOSE);
-}
-
-// ---------------- HUD ----------------
+// ---------------------- HUD (touch instructions) ----------------------
 function drawHUD() {
   push();
   resetMatrix();
   textAlign(LEFT, TOP);
   noStroke();
 
-  const s = map(min(width, height), 320, 1200, 1.2, 1.0, true);
+  const m = min(width, height);
+  const s = map(m, 320, 1200, 1.2, 1.0, true);
   const pad = 14 * s;
 
   fill(0, 0, 0, 0.18);
@@ -669,16 +325,11 @@ function drawHUD() {
 
   fill(0, 0, 100, 0.86);
   textSize(14 * s);
-  text("Tap: skip / next   •   Swipe: wind", pad, pad);
+  text("Tap: new garden   •   Drag: bend the field   •   Two-finger: pulse", pad, pad);
 
   fill(0, 0, 100, 0.62);
   textSize(12 * s);
-  text(`Scene ${scene + 1}/11`, pad, pad + 20 * s);
-  pop();
-}
+  text(`seed: ${seed}`, pad, pad + 20 * s);
 
-// ---------------- Utils ----------------
-function smoothstep(x) {
-  x = constrain(x, 0, 1);
-  return x * x * (3 - 2 * x);
+  pop();
 }
