@@ -1,281 +1,524 @@
-// Generative Heart Field (p5.js)
-// Touch: tap = reseed, drag = wind, two-finger = stronger pulse
-// Mobile-first, fullscreen, dark background, luminous heart emerges from flow particles.
+// Alpine Story — p5.js
+// Act 1: Sunrise behind Alps
+// Act 2: Church tower appears
+// Act 3: Apple orchard grows
+// Touch: Tap = next act / restart, Swipe = wind
 
 let seed = 0;
-let particles = [];
-let t0 = 0;
 
-let windX = 0;
-let windY = 0;
+let act = 1;            // 1..3
+let actStart = 0;       // frameCount when act began
+let wind = 0;
 
-let pulse = 0;
-let pulseBoost = 0;
+let clouds = [];
+let trees = [];
+let apples = [];
 
 function reseed() {
   seed = (Date.now() ^ (Math.random() * 1e9)) >>> 0;
   randomSeed(seed);
   noiseSeed(seed);
-  t0 = random(1000);
 
-  particles = [];
-  const m = min(width, height);
+  act = 1;
+  actStart = frameCount;
+  wind = 0;
 
-  // particle count scales with screen
-  const N = floor(map(m, 320, 1400, 1600, 5200, true));
+  clouds = [];
+  trees = [];
+  apples = [];
 
-  for (let i = 0; i < N; i++) {
-    particles.push(makeParticle(i));
-  }
+  const cloudCount = floor(map(min(windowWidth, windowHeight), 320, 1400, 6, 12, true));
+  for (let i = 0; i < cloudCount; i++) clouds.push(makeCloud());
+
+  // orchard placeholders (spawn later)
+  const treeCount = floor(map(min(width, height), 320, 1400, 10, 26, true));
+  for (let i = 0; i < treeCount; i++) trees.push(makeTree(i, treeCount));
 }
 
 function setup() {
   createCanvas(windowWidth, windowHeight);
   pixelDensity(min(2, displayDensity()));
   colorMode(HSB, 360, 100, 100, 1);
-  background(230, 20, 4);
   reseed();
 }
 
 function windowResized() {
   resizeCanvas(windowWidth, windowHeight);
-  background(230, 20, 4);
   reseed();
 }
 
-// ---------------------------
-// Touch / mouse
-// ---------------------------
-function touchStarted() {
-  // Tap reseed if it's a short touch
-  if (touches && touches.length === 2) {
-    pulseBoost = 1.0; // two-finger = stronger pulse
-  }
-  return false;
-}
-
+// ----------------- Input -----------------
+function touchStarted() { return false; }
 function touchMoved() {
-  // drag = wind
-  windX += constrain(movedX * 0.015, -0.9, 0.9);
-  windY += constrain(movedY * 0.015, -0.9, 0.9);
+  wind += constrain(movedX * 0.03, -1.4, 1.4);
   return false;
 }
-
 function touchEnded() {
-  // if it was basically a tap (no drag), reseed
-  // (p5 doesn't give tap detection perfectly; this is a simple heuristic)
-  if (abs(movedX) < 2 && abs(movedY) < 2) reseed();
-  pulseBoost = 0.0;
+  nextAct();
   return false;
 }
+function mousePressed() { nextAct(); }
 
-function mousePressed() {
-  reseed();
+function nextAct() {
+  // If current act still mid-animation, jump to its end
+  const p = actProgress();
+  if (p < 0.98) {
+    actStart -= 99999; // hack: makes progress ~1
+    return;
+  }
+  // advance act
+  if (act < 3) {
+    act++;
+    actStart = frameCount;
+  } else {
+    reseed();
+  }
 }
 
-function mouseDragged() {
-  windX += constrain(movedX * 0.012, -0.8, 0.8);
-  windY += constrain(movedY * 0.012, -0.8, 0.8);
+function actProgress() {
+  // each act duration in frames (scaled a bit with screen size)
+  const m = min(width, height);
+  const speed = map(m, 320, 1400, 1.15, 0.85, true);
+  const dur = (act === 1) ? 380 : (act === 2 ? 320 : 520);
+  return constrain((frameCount - actStart) / (dur * speed), 0, 1);
 }
 
-// ---------------------------
-// Core: heart attractor + flow field
-// ---------------------------
-
+// --------------- Draw loop ---------------
 function draw() {
-  // soft trail (keeps it luminous)
-  background(230, 20, 4, 0.10);
+  wind *= 0.96;
+  wind = constrain(wind, -8, 8);
 
-  // wind decays
-  windX *= 0.96;
-  windY *= 0.96;
-  windX = constrain(windX, -8, 8);
-  windY = constrain(windY, -8, 8);
+  // background sky depends on act 1 sunrise progress
+  const p1 = (act === 1) ? actProgress() : 1;
+  drawSky(p1);
 
-  // pulse
-  pulse = 0.5 + 0.5 * sin(frameCount * 0.06 + t0);
-  const pulseAmp = (0.35 + 0.75 * pulse) * (1.0 + 0.85 * pulseBoost);
+  // far glow / haze
+  drawHaze(p1);
 
-  // draw heart scaffold very subtly (optional vibe)
-  drawHeartHalo(pulseAmp);
+  // Alps always present
+  drawAlps(p1);
 
-  // update particles
-  const t = t0 + frameCount * 0.007;
-  for (let p of particles) {
-    stepParticle(p, t, pulseAmp);
-    renderParticle(p, t, pulseAmp);
+  // Act 1: sun
+  if (act >= 1) drawSunrise(p1);
+
+  // clouds always, slightly different mood early/late
+  drawClouds();
+
+  // Act 2+: church tower
+  if (act >= 2) {
+    const p2 = (act === 2) ? actProgress() : 1;
+    drawChurchTower(p2);
   }
 
-  // small HUD on canvas (touch instructions)
+  // Act 3: orchard grows
+  if (act >= 3) {
+    const p3 = actProgress();
+    drawOrchard(p3);
+  }
+
+  drawGroundForeground();
+
   drawHUD();
 }
 
-function makeParticle(i) {
-  const m = min(width, height);
-  return {
-    // start scattered
-    x: random(width),
-    y: random(height),
-    vx: random(-0.5, 0.5),
-    vy: random(-0.5, 0.5),
-    // personal color bias
-    h0: random([350, 0, 10, 320, 200]), // reds + a hint of cyan
-    w: random(0.7, 2.2) * map(m, 320, 1400, 1.4, 1.0, true),
-    a: random(0.04, 0.14),
-    phase: random(TAU),
-    age: random(0, 1000)
-  };
-}
+// ----------------- Scene elements -----------------
+function drawSky(pSun) {
+  // pSun 0..1 controls dawn -> day
+  // Use vertical gradient with HSB
+  noStroke();
+  for (let y = 0; y < height; y += 3) {
+    const t = y / height;
 
-// Parametric heart curve (classic)
-function heartPoint(u) {
-  // u in [0..TAU]
-  // produces points roughly in range [-16..16] horizontally, [-17..13] vertically
-  const x = 16 * pow(sin(u), 3);
-  const y = 13 * cos(u) - 5 * cos(2 * u) - 2 * cos(3 * u) - cos(4 * u);
-  return { x, y: -y }; // flip y for screen coords
-}
+    // dawn: deep blue -> warm orange near horizon
+    const hDawnTop = 220, sDawnTop = 55, bDawnTop = 18;
+    const hDawnHor = 25,  sDawnHor = 70, bDawnHor = 30;
 
-function heartTarget(t, pulseAmp) {
-  // A slowly precessing u value for motion on the heart perimeter
-  const u = (t * 1.05) % TAU;
-  const p = heartPoint(u);
+    // day: rich blue -> pale near horizon
+    const hDayTop  = 205, sDayTop  = 45, bDayTop  = 35;
+    const hDayHor  = 195, sDayHor  = 25, bDayHor  = 45;
 
-  // scale & center
-  const m = min(width, height);
-  const s = (m * 0.030) * (1.0 + 0.07 * sin(t * 1.7)) * (0.85 + 0.35 * pulseAmp);
+    const hTop = lerp(hDawnTop, hDayTop, pSun);
+    const sTop = lerp(sDawnTop, sDayTop, pSun);
+    const bTop = lerp(bDawnTop, bDayTop, pSun);
 
-  return {
-    x: width * 0.5 + p.x * s,
-    y: height * 0.48 + p.y * s
-  };
-}
+    const hHor = lerp(hDawnHor, hDayHor, pSun);
+    const sHor = lerp(sDawnHor, sDayHor, pSun);
+    const bHor = lerp(bDawnHor, bDayHor, pSun);
 
-function stepParticle(p, t, pulseAmp) {
-  p.age += 1;
+    const h = lerp(hTop, hHor, pow(t, 1.7));
+    const s = lerp(sTop, sHor, pow(t, 1.7));
+    const b = lerp(bTop, bHor, pow(t, 1.7));
 
-  // Flow field
-  const n = noise(p.x * 0.0022, p.y * 0.0022, t);
-  const ang = n * TAU * 2;
-  const fx = cos(ang);
-  const fy = sin(ang);
-
-  // Heart attractor: each particle chases a slightly different point on the heart
-  const u = (t * 0.85 + p.phase + (p.age * 0.0008)) % TAU;
-  const hp = heartPoint(u);
-
-  const m = min(width, height);
-  const s = (m * 0.030) * (0.85 + 0.35 * pulseAmp);
-  const hx = width * 0.5 + hp.x * s;
-  const hy = height * 0.48 + hp.y * s;
-
-  // Direction to heart point
-  const dx = hx - p.x;
-  const dy = hy - p.y;
-  const d = sqrt(dx * dx + dy * dy) + 1e-6;
-
-  // Attraction strength increases when far, softens when close (creates a crisp outline)
-  const pull = (0.9 + 1.4 * pulseAmp) * (0.7 + 0.6 * (1 - exp(-d / (m * 0.12))));
-  const ax = (dx / d) * pull;
-  const ay = (dy / d) * pull;
-
-  // Combine: flow + attraction + wind + tiny jitter
-  const jitter = 0.15 * (noise(p.phase + t) - 0.5);
-  p.vx += fx * 0.55 + ax * 0.18 + windX * 0.02 + jitter;
-  p.vy += fy * 0.55 + ay * 0.18 + windY * 0.02 + jitter;
-
-  // Velocity damping (keeps it stable)
-  p.vx *= 0.93;
-  p.vy *= 0.93;
-
-  // Move
-  p.x += p.vx;
-  p.y += p.vy;
-
-  // Wrap-around for continuity
-  if (p.x < -20) p.x = width + 20;
-  if (p.x > width + 20) p.x = -20;
-  if (p.y < -20) p.y = height + 20;
-  if (p.y > height + 20) p.y = -20;
-}
-
-function renderParticle(p, t, pulseAmp) {
-  // color evolves: mostly red/pink, sometimes gold/cyan glints
-  const glint = noise(p.x * 0.004, p.y * 0.004, t * 0.7);
-  let h = (p.h0 + 25 * sin(t + p.phase)) % 360;
-
-  // occasional icy glint
-  if (glint > 0.86) h = 190 + 40 * (glint - 0.86) / 0.14;
-
-  const sat = 65 + 35 * (0.5 + 0.5 * sin(p.phase + t * 1.3));
-  const bri = 70 + 30 * glint;
-
-  // alpha stronger near heart (approx: use noise as proxy + pulse)
-  const a = p.a * (0.7 + 0.7 * pulseAmp) * (0.8 + 0.6 * glint);
-
-  // fat glow
-  strokeWeight(p.w * 2.2);
-  stroke(h, sat * 0.6, 100, a * 0.10);
-  point(p.x, p.y);
-
-  // core
-  strokeWeight(p.w);
-  stroke(h, sat, bri, a);
-  point(p.x, p.y);
-
-  // tiny star cross sometimes for “spark”
-  if (glint > 0.92) {
-    strokeWeight(1);
-    stroke(h, 40, 100, a * 0.35);
-    const s = 7 * (0.8 + 0.6 * pulseAmp);
-    line(p.x - s, p.y, p.x + s, p.y);
-    line(p.x, p.y - s, p.x, p.y + s);
+    fill(h, s, b, 1);
+    rect(0, y, width, 3);
   }
 }
 
-function drawHeartHalo(pulseAmp) {
-  // subtle glowing heart outline (not a solid line)
-  const steps = 220;
-  const m = min(width, height);
-  const s = (m * 0.030) * (0.85 + 0.35 * pulseAmp);
+function drawHaze(pSun) {
+  // subtle horizon haze
+  noStroke();
+  const horizon = height * 0.62;
+  for (let i = 0; i < 8; i++) {
+    const a = 0.06 * (1 - i / 8) * (0.4 + 0.6 * pSun);
+    fill(30, 20, 100, a);
+    rect(0, horizon - i * 18, width, 28);
+  }
+}
 
-  for (let layer = 4; layer >= 1; layer--) {
-    const a = 0.018 * layer;
-    stroke(350, 60, 100, a);
-    strokeWeight((layer * 2.2) * map(m, 320, 1400, 1.5, 1.0, true));
+function drawAlps(pSun) {
+  // layered mountain silhouettes
+  const horizon = height * 0.62;
+  const layers = 3;
+  for (let L = 0; L < layers; L++) {
+    const z = L / (layers - 1);
+    const yBase = horizon + z * 70;
+    const amp = lerp(130, 55, z);
+    const freq = lerp(0.006, 0.012, z);
+
+    // color: farther = lighter, closer = darker
+    const h = 220;
+    const s = lerp(18, 30, 1 - z);
+    const b = lerp(18, 10, 1 - z) + 12 * pSun;
+    fill(h, s, b, 1);
+    noStroke();
 
     beginShape();
-    for (let i = 0; i <= steps; i++) {
-      const u = (i / steps) * TAU;
-      const p = heartPoint(u);
-      const x = width * 0.5 + p.x * s;
-      const y = height * 0.48 + p.y * s;
-      curveVertex(x, y);
+    vertex(0, height);
+    for (let x = 0; x <= width; x += 16) {
+      const n = noise(seed * 0.0001 + x * freq, 0.7 + z * 3);
+      const ridge = yBase - n * amp - pow(noise(x * freq * 1.6, z * 2.2), 2) * 40;
+      curveVertex(x, ridge);
     }
-    endShape();
+    vertex(width, height);
+    endShape(CLOSE);
+
+    // snow caps (subtle) on front layer when sun is up
+    if (L === 1 || L === 2) drawSnowCaps(yBase, amp, freq, z, pSun);
   }
 }
 
+function drawSnowCaps(yBase, amp, freq, z, pSun) {
+  if (pSun < 0.4) return;
+  noFill();
+  stroke(0, 0, 100, 0.08 * pSun);
+  strokeWeight(1.1);
+
+  beginShape();
+  for (let x = 0; x <= width; x += 18) {
+    const n = noise(seed * 0.0001 + x * freq, 0.7 + z * 3);
+    const ridge = yBase - n * amp;
+    const cap = ridge + 10 + noise(x * 0.02, z * 4) * 10;
+    curveVertex(x, cap);
+  }
+  endShape();
+}
+
+function drawSunrise(p) {
+  // sun rises behind mountains: from below horizon to above
+  const horizon = height * 0.62;
+  const x = width * 0.5 + sin((seed % 1000) * 0.01) * width * 0.08;
+  const y = lerp(horizon + 70, horizon - 90, smoothstep(p));
+  const r = lerp(28, 60, smoothstep(p)) * map(min(width, height), 320, 1400, 1.25, 1.0, true);
+
+  // glow
+  noStroke();
+  for (let i = 10; i >= 1; i--) {
+    const a = 0.035 * i * (0.6 + 0.8 * p);
+    fill(35, 70, 100, a * 0.08);
+    circle(x, y, r * (1 + i * 0.25));
+  }
+
+  // core
+  fill(38, 80, 100, 0.95);
+  circle(x, y, r * 1.1);
+
+  // rays (subtle)
+  stroke(38, 55, 100, 0.10 * p);
+  strokeWeight(1);
+  for (let k = 0; k < 20; k++) {
+    const a = (k / 20) * TAU;
+    const rr1 = r * 1.25;
+    const rr2 = r * 1.75 + noise(k * 0.2, seed * 0.001) * 18;
+    line(x + cos(a) * rr1, y + sin(a) * rr1, x + cos(a) * rr2, y + sin(a) * rr2);
+  }
+}
+
+function makeCloud() {
+  return {
+    x: random(width),
+    y: random(height * 0.08, height * 0.38),
+    s: random(0.6, 1.3),
+    v: random(0.12, 0.35),
+    p: random(1000),
+  };
+}
+
+function drawClouds() {
+  const mood = (act === 1) ? actProgress() : 1; // brighter later
+  for (let c of clouds) {
+    c.x += c.v + wind * 0.10;
+    c.p += 0.006;
+    if (c.x > width + 160) c.x = -160;
+
+    const a = 0.06 + 0.05 * mood;
+    noStroke();
+    // layered puffs
+    const base = 0.65 + 0.35 * noise(c.p);
+    for (let i = 0; i < 6; i++) {
+      const ox = (i - 2.5) * 40 * c.s + noise(c.p + i) * 18;
+      const oy = noise(c.p + 10 + i) * 14;
+      const rr = 70 * c.s * (0.75 + 0.35 * noise(c.p + 30 + i)) * base;
+      fill(0, 0, 100, a * (0.55 - i * 0.04));
+      circle(c.x + ox, c.y + oy, rr);
+    }
+  }
+}
+
+function drawChurchTower(p) {
+  // build from ground up near right third (Bavarian vibe)
+  const groundY = height * 0.78;
+  const x = width * 0.72;
+  const w = min(width, height) * 0.075;
+  const h = min(width, height) * 0.42;
+
+  const grow = smoothstep(p);
+
+  // silhouette with soft glow
+  push();
+  translate(x, groundY);
+  const hh = h * grow;
+
+  // glow
+  for (let k = 6; k >= 1; k--) {
+    stroke(45, 25, 100, 0.02);
+    strokeWeight(k * 6);
+    noFill();
+    churchShape(w, hh);
+  }
+
+  // body
+  stroke(40, 12, 95, 0.55);
+  strokeWeight(2.2);
+  fill(35, 8, 20, 0.65);
+  churchShapeFilled(w, hh);
+
+  // windows (appear late)
+  if (p > 0.55) {
+    const ww = w * 0.18;
+    const wy = -hh * 0.55;
+    noStroke();
+    fill(50, 60, 100, 0.22);
+    rect(-ww * 0.5, wy, ww, ww * 1.6, 6);
+    rect(-ww * 0.5, wy + ww * 2.1, ww, ww * 1.6, 6);
+  }
+
+  pop();
+}
+
+function churchShape(w, hh) {
+  // outline (no fill)
+  beginShape();
+  // base
+  vertex(-w * 0.55, 0);
+  vertex(-w * 0.55, -hh * 0.75);
+  // belfry step
+  vertex(-w * 0.40, -hh * 0.75);
+  vertex(-w * 0.40, -hh * 0.90);
+  vertex(-w * 0.28, -hh * 0.90);
+  // spire
+  vertex(0, -hh);
+  vertex(w * 0.28, -hh * 0.90);
+  vertex(w * 0.40, -hh * 0.90);
+  vertex(w * 0.40, -hh * 0.75);
+  vertex(w * 0.55, -hh * 0.75);
+  vertex(w * 0.55, 0);
+  endShape(CLOSE);
+}
+
+function churchShapeFilled(w, hh) {
+  beginShape();
+  vertex(-w * 0.55, 0);
+  vertex(-w * 0.55, -hh * 0.75);
+  vertex(-w * 0.40, -hh * 0.75);
+  vertex(-w * 0.40, -hh * 0.90);
+  vertex(-w * 0.28, -hh * 0.90);
+  vertex(0, -hh);
+  vertex(w * 0.28, -hh * 0.90);
+  vertex(w * 0.40, -hh * 0.90);
+  vertex(w * 0.40, -hh * 0.75);
+  vertex(w * 0.55, -hh * 0.75);
+  vertex(w * 0.55, 0);
+  endShape(CLOSE);
+}
+
+function drawOrchard(p) {
+  // trees grow across the valley foreground, apples appear later
+  const grow = smoothstep(p);
+
+  for (let t of trees) {
+    drawTree(t, grow);
+  }
+
+  // apples appear after trunk/branches formed
+  if (p > 0.55) {
+    const aP = smoothstep(map(p, 0.55, 1.0, 0, 1, true));
+    drawApples(aP);
+  }
+}
+
+function makeTree(i, n) {
+  // distribute in two bands left + center
+  const band = (i % 2 === 0) ? 0.18 : 0.52;
+  const x = width * (band + random(-0.12, 0.22));
+  const groundY = height * 0.78 + random(-6, 10);
+  const size = random(0.75, 1.35);
+  const lean = random(-0.08, 0.08);
+  const hue = random([110, 120, 135]); // green-ish
+  return { x, groundY, size, lean, hue, id: i };
+}
+
+function drawTree(tr, g) {
+  const baseH = min(width, height) * 0.22 * tr.size;
+  const trunkH = baseH * (0.55 + 0.45 * g);
+  const crownR = baseH * (0.55 + 0.65 * g);
+
+  // trunk
+  push();
+  translate(tr.x, tr.groundY);
+  rotate(tr.lean);
+
+  // trunk glow
+  for (let k = 4; k >= 1; k--) {
+    stroke(30, 20, 100, 0.015);
+    strokeWeight(k * 5);
+    line(0, 0, 0, -trunkH);
+  }
+
+  stroke(28, 35, 25, 0.65);
+  strokeWeight(3.0);
+  line(0, 0, 0, -trunkH);
+
+  // simple branches
+  if (g > 0.25) {
+    const bg = smoothstep(map(g, 0.25, 1.0, 0, 1, true));
+    strokeWeight(2.0);
+    const b1 = trunkH * 0.30;
+    const b2 = trunkH * 0.45;
+    line(0, -b1, -18 * tr.size * bg, -b1 - 22 * tr.size * bg);
+    line(0, -b2,  20 * tr.size * bg, -b2 - 24 * tr.size * bg);
+  }
+
+  // crown (apple tree blobs)
+  if (g > 0.18) {
+    const cg = smoothstep(map(g, 0.18, 1.0, 0, 1, true));
+    noStroke();
+    const cx = 0;
+    const cy = -trunkH - crownR * 0.15;
+
+    // layered foliage with slight wind sway
+    const sway = wind * 0.12 + sin((frameCount + tr.id * 30) * 0.01) * 0.6;
+    for (let i = 10; i >= 1; i--) {
+      const a = 0.030 * i * cg;
+      fill(tr.hue, 45, 28 + 24 * cg, a * 0.08);
+      circle(cx + sway * i, cy, crownR * (1 + i * 0.12));
+    }
+
+    for (let i = 0; i < 9; i++) {
+      const ox = (noise(tr.id * 3 + i) - 0.5) * crownR * 0.85 + sway * 2.5;
+      const oy = (noise(tr.id * 7 + i) - 0.5) * crownR * 0.55;
+      const rr = crownR * (0.35 + 0.25 * noise(tr.id * 11 + i)) * cg;
+      fill(tr.hue + random(-6, 6), 55, 32 + 30 * cg, 0.26);
+      circle(cx + ox, cy + oy, rr);
+    }
+  }
+
+  pop();
+}
+
+function drawApples(aP) {
+  // sprinkle apples around crowns; deterministic positions
+  noStroke();
+  for (let tr of trees) {
+    const baseH = min(width, height) * 0.22 * tr.size;
+    const trunkH = baseH * 0.95;
+    const crownR = baseH * 1.10;
+
+    const cx = tr.x;
+    const cy = tr.groundY - trunkH - crownR * 0.15;
+
+    const count = 4 + (tr.id % 5);
+    for (let i = 0; i < count; i++) {
+      // deterministic pseudo-random per tree
+      const rx = (noise(tr.id * 13.7 + i * 9.1) - 0.5) * crownR * 0.9;
+      const ry = (noise(tr.id * 21.3 + i * 6.2) - 0.5) * crownR * 0.55;
+      const r = (6 + 6 * noise(tr.id * 4.2 + i * 3.3)) * aP;
+
+      const shine = 0.4 + 0.6 * noise((frameCount * 0.02) + tr.id + i);
+      // apples: red with tiny highlight
+      fill(0, 70, 55 + 35 * shine, 0.22 * aP);
+      circle(cx + rx, cy + ry, r * 2.3);
+      fill(0, 75, 85, 0.16 * aP);
+      circle(cx + rx - r * 0.35, cy + ry - r * 0.35, r * 0.8);
+    }
+  }
+}
+
+function drawGroundForeground() {
+  const y = height * 0.78;
+
+  // ground gradient
+  noStroke();
+  for (let i = 0; i < 10; i++) {
+    const a = 0.10 + i * 0.02;
+    fill(110, 35, 12 + i * 2, a);
+    rect(0, y + i * 16, width, 20);
+  }
+
+  // subtle grass strokes
+  stroke(110, 35, 25, 0.06);
+  strokeWeight(1);
+  for (let x = 0; x < width; x += 10) {
+    const h = 12 + noise(x * 0.02, seed * 0.01) * 18;
+    line(x, y + 60, x + wind * 0.2, y + 60 - h);
+  }
+}
+
+// ----------------- HUD -----------------
 function drawHUD() {
+  const p = actProgress();
+  const textA = (act === 1) ? "Sunrise" : (act === 2 ? "Church tower" : "Apple orchard");
+  const hint = "Tap: next / finish  •  Swipe: wind";
+
   push();
   resetMatrix();
   textAlign(LEFT, TOP);
   noStroke();
 
-  const m = min(width, height);
-  const s = map(m, 320, 1200, 1.2, 1.0, true);
+  const s = map(min(width, height), 320, 1200, 1.2, 1.0, true);
   const pad = 14 * s;
 
   fill(0, 0, 0, 0.18);
-  rect(pad - 8, pad - 8, 340 * s, 62 * s, 10);
+  rect(pad - 8, pad - 8, 330 * s, 56 * s, 10);
 
   fill(0, 0, 100, 0.86);
   textSize(14 * s);
-  text("Generative Heart", pad, pad);
+  text(`Alpine Story — ${textA}`, pad, pad);
 
-  fill(0, 0, 100, 0.68);
+  fill(0, 0, 100, 0.66);
   textSize(12 * s);
-  text("Tap: new heart  •  Drag: bend the field  •  Two-finger: pulse", pad, pad + 20 * s);
+  text(hint, pad, pad + 20 * s);
+
+  // tiny progress bar
+  fill(0, 0, 100, 0.20);
+  rect(pad, pad + 40 * s, 280 * s, 6 * s, 4);
+  fill(45, 35, 100, 0.35);
+  rect(pad, pad + 40 * s, 280 * s * p, 6 * s, 4);
 
   pop();
+}
+
+// --------------- Utility ---------------
+function smoothstep(x) {
+  x = constrain(x, 0, 1);
+  return x * x * (3 - 2 * x);
 }
