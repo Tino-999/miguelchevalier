@@ -1,335 +1,265 @@
-// "Hiersein ist herrlich" — Generative Light Garden (p5.js)
-// Inspired by immersive, luminous, algorithmic installation aesthetics (Miguel Chevalier vibe).
-// Touch: Tap = new composition, Drag = bend the field (wind), Two-finger = amplify pulse.
+// art.js — "Kindness Field" (single file, no libs)
+(() => {
+  "use strict";
 
-let seed = 0;
-let t0 = 0;
+  // ---------- Canvas ----------
+  const canvas = document.createElement("canvas");
+  const ctx = canvas.getContext("2d", { alpha: true });
+  document.body.style.margin = "0";
+  document.body.style.overflow = "hidden";
+  document.body.style.background = "#05060a";
+  document.body.appendChild(canvas);
 
-let flow = [];
-let particles = [];
-let blooms = [];
-
-let windX = 0;
-let windY = 0;
-
-let pulseBoost = 0;
-
-function setup() {
-  createCanvas(windowWidth, windowHeight);
-  pixelDensity(min(2, displayDensity()));
-  colorMode(HSB, 360, 100, 100, 1);
-  noFill();
-  reseed();
-}
-
-function windowResized() {
-  resizeCanvas(windowWidth, windowHeight);
-  reseed();
-}
-
-function reseed() {
-  seed = (Date.now() ^ (Math.random() * 1e9)) >>> 0;
-  randomSeed(seed);
-  noiseSeed(seed);
-  t0 = random(1000);
-
-  windX = 0;
-  windY = 0;
-  pulseBoost = 0;
-
-  // flow grid
-  const cell = max(18, floor(min(width, height) / 40));
-  const cols = floor(width / cell) + 2;
-  const rows = floor(height / cell) + 2;
-  flow = { cell, cols, rows, a: new Array(cols * rows).fill(0) };
-
-  // blooms (soft luminous “flowers”)
-  blooms = [];
-  const B = floor(map(min(width, height), 320, 1400, 10, 26, true));
-  for (let i = 0; i < B; i++) blooms.push(makeBloom());
-
-  // particles (light filaments)
-  particles = [];
-  const N = floor(map(min(width, height), 320, 1400, 1800, 5200, true));
-  for (let i = 0; i < N; i++) particles.push(makeParticle());
-
-  background(230, 20, 3);
-}
-
-// ---------------------- Input (mobile-first) ----------------------
-function touchStarted() {
-  if (touches && touches.length >= 2) pulseBoost = 1.0;
-  return false;
-}
-
-function touchMoved() {
-  windX += constrain(movedX * 0.02, -1.2, 1.2);
-  windY += constrain(movedY * 0.02, -1.2, 1.2);
-  return false;
-}
-
-function touchEnded() {
-  // quick tap -> reseed
-  if (abs(movedX) < 2 && abs(movedY) < 2) reseed();
-  pulseBoost = 0.0;
-  return false;
-}
-
-function mousePressed() {
-  reseed();
-}
-function mouseDragged() {
-  windX += constrain(movedX * 0.015, -1.0, 1.0);
-  windY += constrain(movedY * 0.015, -1.0, 1.0);
-}
-
-// ---------------------- Draw loop ----------------------
-function draw() {
-  // soft persistence for luminous trails
-  background(230, 20, 3, 0.10);
-
-  // decay wind
-  windX *= 0.965;
-  windY *= 0.965;
-  windX = constrain(windX, -8, 8);
-  windY = constrain(windY, -8, 8);
-
-  const t = t0 + frameCount * 0.007;
-
-  // pulse (breathing)
-  const pulse = 0.55 + 0.45 * sin(frameCount * 0.045 + t0);
-  const amp = (0.85 + 0.55 * pulse) * (1.0 + 0.85 * pulseBoost);
-
-  updateFlow(t, amp);
-  drawBlooms(t, amp);
-  drawFilaments(t, amp);
-
-  drawMotto(t, amp);
-  drawHUD();
-}
-
-// ---------------------- Flow field ----------------------
-function updateFlow(t, amp) {
-  const { cols, rows } = flow;
-  const s = 0.006;
-  for (let y = 0; y < rows; y++) {
-    for (let x = 0; x < cols; x++) {
-      const nx = x * s;
-      const ny = y * s;
-
-      // layered noise -> swirling vectors
-      const n1 = noise(nx, ny, t * 0.7);
-      const n2 = noise(nx * 1.7 + 20, ny * 1.7 + 20, t * 1.05);
-
-      let ang = (n1 * TAU * 2.0) + (n2 - 0.5) * 1.3;
-
-      // gentle wind bend (stronger near top = like air)
-      const topBias = 1.0 - (y / rows);
-      ang += (windX * 0.02) * topBias;
-      ang += (windY * 0.02) * topBias;
-
-      // pulse adds subtle precession
-      ang += sin(t * 0.6 + x * 0.12 + y * 0.08) * 0.08 * amp;
-
-      flow.a[x + y * cols] = ang;
-    }
+  let W = 0, H = 0, DPR = 1;
+  function resize() {
+    DPR = Math.max(1, Math.min(2, window.devicePixelRatio || 1));
+    W = Math.floor(window.innerWidth);
+    H = Math.floor(window.innerHeight);
+    canvas.width = Math.floor(W * DPR);
+    canvas.height = Math.floor(H * DPR);
+    canvas.style.width = W + "px";
+    canvas.style.height = H + "px";
+    ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
   }
-}
+  window.addEventListener("resize", resize, { passive: true });
+  resize();
 
-// ---------------------- Particles / Filaments ----------------------
-function makeParticle() {
-  const m = min(width, height);
-  const w = random(0.7, 2.0) * map(m, 320, 1400, 1.6, 1.0, true);
-  const hue = random([345, 10, 28, 45, 135, 165, 190, 205, 315]); // festive-ish, but abstract
-  return {
-    x: random(width),
-    y: random(height),
-    vx: 0,
-    vy: 0,
-    w,
-    hue,
-    sat: random(55, 95),
-    bri: random(65, 100),
-    a: random(0.03, 0.12),
-    life: floor(random(120, 520)),
-    phase: random(TAU)
-  };
-}
+  // ---------- Pointer (mouse/touch) ----------
+  const pointer = { x: W * 0.5, y: H * 0.5, tx: W * 0.5, ty: H * 0.5, down: false };
+  const onMove = (x, y) => { pointer.tx = x; pointer.ty = y; };
+  window.addEventListener("mousemove", (e) => onMove(e.clientX, e.clientY), { passive: true });
+  window.addEventListener("mousedown", () => (pointer.down = true), { passive: true });
+  window.addEventListener("mouseup",   () => (pointer.down = false), { passive: true });
 
-function drawFilaments(t, amp) {
-  const { cell, cols } = flow;
+  window.addEventListener("touchstart", (e) => {
+    pointer.down = true;
+    const t = e.touches[0];
+    if (t) onMove(t.clientX, t.clientY);
+  }, { passive: true });
+  window.addEventListener("touchmove", (e) => {
+    const t = e.touches[0];
+    if (t) onMove(t.clientX, t.clientY);
+  }, { passive: true });
+  window.addEventListener("touchend", () => (pointer.down = false), { passive: true });
 
-  for (let p of particles) {
-    const px = p.x;
-    const py = p.y;
-
-    // sample flow angle
-    const gx = floor(px / cell);
-    const gy = floor(py / cell);
-    const idx = constrain(gx, 0, cols - 1) + constrain(gy, 0, flow.rows - 1) * cols;
-    const ang = flow.a[idx] ?? 0;
-
-    // step
-    const sp = (0.7 + 1.6 * noise(px * 0.004, py * 0.004, t)) * (0.55 + 0.65 * amp);
-    const ax = cos(ang) * sp + windX * 0.03;
-    const ay = sin(ang) * sp + windY * 0.03;
-
-    p.vx = p.vx * 0.86 + ax * 0.34;
-    p.vy = p.vy * 0.86 + ay * 0.34;
-
-    const nx = px + p.vx;
-    const ny = py + p.vy;
-
-    // color modulation
-    const glint = noise(px * 0.006, py * 0.006, t * 0.9);
-    let h = (p.hue + 20 * sin(t + p.phase)) % 360;
-    if (glint > 0.90) h = (200 + 120 * (glint - 0.90) / 0.10) % 360;
-
-    const a = p.a * (0.6 + 0.9 * amp) * (0.7 + 0.7 * glint);
-    const w = p.w * (0.9 + 0.5 * amp);
-
-    // luminous stroke: glow + core
-    strokeWeight(w * 2.4);
-    stroke(h, p.sat * 0.55, 100, a * 0.10);
-    line(px, py, nx, ny);
-
-    strokeWeight(w);
-    stroke(h, p.sat, p.bri, a);
-    line(px, py, nx, ny);
-
-    // occasional star-cross
-    if (glint > 0.93 && (frameCount % 2 === 0)) {
-      strokeWeight(1);
-      stroke(h, 35, 100, a * 0.30);
-      const s = 8 * (0.8 + 0.6 * amp);
-      line(nx - s, ny, nx + s, ny);
-      line(nx, ny - s, nx, ny + s);
-    }
-
-    p.x = nx;
-    p.y = ny;
-
-    // wrap
-    if (p.x < -10) p.x = width + 10;
-    if (p.x > width + 10) p.x = -10;
-    if (p.y < -10) p.y = height + 10;
-    if (p.y > height + 10) p.y = -10;
-
-    // respawn
-    p.life--;
-    if (p.life <= 0) {
-      p.x = random(width);
-      p.y = random(height);
-      p.vx = 0;
-      p.vy = 0;
-      p.life = floor(random(140, 620));
-      p.hue = random([345, 10, 28, 45, 135, 165, 190, 205, 315]);
-      p.phase = random(TAU);
-    }
-  }
-}
-
-// ---------------------- Blooms (soft “garden lights”) ----------------------
-function makeBloom() {
-  const m = min(width, height);
-  const r = random(35, 120) * map(m, 320, 1400, 1.4, 1.0, true);
-  const hue = random([350, 0, 15, 35, 160, 185, 205, 310]);
-  return {
-    x: random(width),
-    y: random(height),
-    r,
-    hue,
-    phase: random(TAU),
-    drift: random(0.15, 0.9),
-    alpha: random(0.05, 0.16)
-  };
-}
-
-function drawBlooms(t, amp) {
-  for (let b of blooms) {
-    // slow drift
-    const n1 = noise(b.x * 0.0018, b.y * 0.0018, t * 0.35);
-    const n2 = noise(b.x * 0.0018 + 10, b.y * 0.0018 + 10, t * 0.35);
-    b.x = (b.x + (n1 - 0.5) * 0.8 * b.drift + windX * 0.04 + width) % width;
-    b.y = (b.y + (n2 - 0.5) * 0.6 * b.drift + windY * 0.04 + height) % height;
-
-    const rr = b.r * (0.85 + 0.25 * sin(t * 1.2 + b.phase)) * (0.85 + 0.35 * amp);
-    const a = b.alpha * (0.7 + 0.7 * amp);
-
-    noFill();
-    for (let k = 5; k >= 1; k--) {
-      stroke(b.hue, 70, 100, a * 0.08);
-      strokeWeight(k * 7);
-      circle(b.x, b.y, rr * (1 + k * 0.22));
-    }
-    stroke(b.hue, 75, 100, a * 0.12);
-    strokeWeight(1.2);
-    circle(b.x, b.y, rr * 0.6);
-  }
-}
-
-// ---------------------- Motto (“Hiersein ist herrlich”) ----------------------
-function drawMotto(t, amp) {
-  // Draw the motto as a subtle, shifting luminous typographic presence.
-  // We avoid heavy fonts: simple canvas text with glow.
-  push();
-  resetMatrix();
-  textAlign(CENTER, CENTER);
-
-  const m = min(width, height);
-  const s = map(m, 320, 1400, 1.2, 1.0, true);
-
-  const x = width * 0.5;
-  const y = height * 0.84;
-
-  const wob = 1.5 * sin(t * 0.9) + 0.8 * sin(t * 1.7);
-  const hue = (340 + 30 * sin(t * 0.6)) % 360;
-
-  const msg = "hiersein ist herrlich";
-
-  // glow layers
-  for (let i = 8; i >= 1; i--) {
-    const a = 0.018 * i * (0.8 + 0.4 * amp);
-    fill(hue, 25, 100, a * 0.10);
-    textSize((26 + i * 1.2) * s);
-    text(msg, x + wob, y);
+  // Smooth pointer
+  function updatePointer() {
+    pointer.x += (pointer.tx - pointer.x) * 0.08;
+    pointer.y += (pointer.ty - pointer.y) * 0.08;
   }
 
-  // core
-  fill(hue, 18, 100, 0.35 + 0.20 * amp);
-  textSize(28 * s);
-  text(msg, x + wob, y);
+  // ---------- Utility ----------
+  const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
+  const lerp = (a, b, t) => a + (b - a) * t;
+  const TAU = Math.PI * 2;
 
-  // tiny underline sparkle (like a signature)
-  stroke(hue, 40, 100, 0.10 + 0.08 * amp);
-  strokeWeight(1);
-  const w = textWidth(msg) * 0.55;
-  line(x - w, y + 20 * s, x + w, y + 20 * s);
+  // ---------- Noise (value noise) ----------
+  // Small deterministic hash
+  function hash2i(x, y) {
+    let n = x * 374761393 + y * 668265263; // large primes
+    n = (n ^ (n >> 13)) >>> 0;
+    n = (n * 1274126177) >>> 0;
+    return n;
+  }
+  function rand01(x, y) {
+    return (hash2i(x, y) & 0xfffffff) / 0xfffffff;
+  }
+  function smoothstep(t) { return t * t * (3 - 2 * t); }
 
-  pop();
-}
+  function noise2(x, y) {
+    const xi = Math.floor(x), yi = Math.floor(y);
+    const xf = x - xi,       yf = y - yi;
 
-// ---------------------- HUD (touch instructions) ----------------------
-function drawHUD() {
-  push();
-  resetMatrix();
-  textAlign(LEFT, TOP);
-  noStroke();
+    const u = smoothstep(xf);
+    const v = smoothstep(yf);
 
-  const m = min(width, height);
-  const s = map(m, 320, 1200, 1.2, 1.0, true);
-  const pad = 14 * s;
+    const a = rand01(xi, yi);
+    const b = rand01(xi + 1, yi);
+    const c = rand01(xi, yi + 1);
+    const d = rand01(xi + 1, yi + 1);
 
-  fill(0, 0, 0, 0.18);
-  rect(pad - 8, pad - 8, 360 * s, 52 * s, 10);
+    const ab = lerp(a, b, u);
+    const cd = lerp(c, d, u);
+    return lerp(ab, cd, v);
+  }
 
-  fill(0, 0, 100, 0.86);
-  textSize(14 * s);
-  text("Tap: new garden   •   Drag: bend the field   •   Two-finger: pulse", pad, pad);
+  // Fractal noise
+  function fbm2(x, y) {
+    let f = 0, amp = 0.55, freq = 1.0;
+    for (let i = 0; i < 4; i++) {
+      f += amp * noise2(x * freq, y * freq);
+      freq *= 2.02;
+      amp *= 0.5;
+    }
+    return f;
+  }
 
-  fill(0, 0, 100, 0.62);
-  textSize(12 * s);
-  text(`seed: ${seed}`, pad, pad + 20 * s);
+  // ---------- Flow field ----------
+  function flowAngle(x, y, t) {
+    // Scale coordinates into noise space
+    const s = 0.0015;
+    const n = fbm2(x * s + t * 0.00003, y * s - t * 0.000025);
+    return n * TAU * 1.25;
+  }
 
-  pop();
-}
+  // ---------- Particles ----------
+  const particles = [];
+  let baseCount = 0;
+
+  function initParticles() {
+    particles.length = 0;
+
+    // Density based on area
+    const area = W * H;
+    baseCount = Math.floor(clamp(area / 6500, 260, 1200));
+
+    for (let i = 0; i < baseCount; i++) {
+      particles.push({
+        x: Math.random() * W,
+        y: Math.random() * H,
+        vx: 0,
+        vy: 0,
+        sp: lerp(0.15, 0.65, Math.random()),
+        w: lerp(0.4, 1.4, Math.random()),
+        a: lerp(0.06, 0.18, Math.random()), // alpha for trails
+        hue: lerp(205, 230, Math.random()), // cool range
+        life: Math.random() * 1000
+      });
+    }
+  }
+  initParticles();
+  window.addEventListener("resize", () => initParticles(), { passive: true });
+
+  // ---------- Rendering ----------
+  let last = performance.now();
+  let t = 0;
+
+  function step(now) {
+    const dt = clamp((now - last) / 16.6667, 0.5, 1.8);
+    last = now;
+    t += (now - last + 16.6667) * 0.001; // stable-ish, not too important
+    updatePointer();
+
+    // Soft fade (trails)
+    ctx.globalCompositeOperation = "source-over";
+    ctx.fillStyle = "rgba(5, 6, 10, 0.08)";
+    ctx.fillRect(0, 0, W, H);
+
+    // Vignette-like gentle darkening edges
+    // (cheap: draw a subtle radial gradient occasionally)
+    if ((now | 0) % 8 === 0) {
+      const g = ctx.createRadialGradient(W * 0.5, H * 0.55, Math.min(W, H) * 0.1, W * 0.5, H * 0.55, Math.max(W, H) * 0.7);
+      g.addColorStop(0, "rgba(0,0,0,0)");
+      g.addColorStop(1, "rgba(0,0,0,0.08)");
+      ctx.fillStyle = g;
+      ctx.fillRect(0, 0, W, H);
+    }
+
+    // Draw particles as short strokes along velocity
+    ctx.globalCompositeOperation = "lighter";
+
+    const calmRadius = Math.min(W, H) * 0.18;     // zone of calm
+    const calmHard  = Math.min(W, H) * 0.06;     // extra calm near pointer
+
+    for (let i = 0; i < particles.length; i++) {
+      const p = particles[i];
+
+      // Flow direction
+      const ang = flowAngle(p.x, p.y, now);
+      const fx = Math.cos(ang);
+      const fy = Math.sin(ang);
+
+      // Calm factor near pointer: turbulence reduced, speed reduced
+      const dx = p.x - pointer.x;
+      const dy = p.y - pointer.y;
+      const d  = Math.hypot(dx, dy);
+
+      let calm = 0;
+      if (d < calmRadius) {
+        calm = 1 - (d / calmRadius);
+        calm = smoothstep(calm);
+      }
+      let superCalm = 0;
+      if (d < calmHard) {
+        superCalm = 1 - (d / calmHard);
+        superCalm = smoothstep(superCalm);
+      }
+
+      // Base speed with slow "breath"
+      const breath = 0.6 + 0.4 * Math.sin(now * 0.00012);
+      const speed = p.sp * (0.65 + 0.35 * breath);
+
+      // When calm: slow down and reduce randomness (smoother motion)
+      const calmSlow = 1 - 0.75 * calm - 0.15 * superCalm;
+
+      // Integrate velocity towards flow
+      const ax = fx * speed * calmSlow;
+      const ay = fy * speed * calmSlow;
+
+      // Damping
+      const damp = 0.86 + 0.08 * (1 - calm);
+      p.vx = p.vx * damp + ax * 0.35;
+      p.vy = p.vy * damp + ay * 0.35;
+
+      // Extra gentle attraction to a loose "center line" to prevent dead zones
+      const cx = W * 0.5, cy = H * 0.52;
+      const toC = 0.0002;
+      p.vx += (cx - p.x) * toC;
+      p.vy += (cy - p.y) * toC;
+
+      // Update position
+      const ox = p.x, oy = p.y;
+      p.x += p.vx * dt;
+      p.y += p.vy * dt;
+
+      // Wrap around edges softly
+      if (p.x < -20) p.x = W + 20;
+      if (p.x > W + 20) p.x = -20;
+      if (p.y < -20) p.y = H + 20;
+      if (p.y > H + 20) p.y = -20;
+
+      // Color/alpha slightly influenced by calmness
+      const a = p.a * (0.6 + 0.6 * (1 - calm)) * (pointer.down ? 0.9 : 1.0);
+      const hue = p.hue + 12 * calm + 6 * Math.sin((now + i * 7) * 0.00008);
+
+      ctx.strokeStyle = `hsla(${hue.toFixed(1)}, 60%, 70%, ${a.toFixed(3)})`;
+      ctx.lineWidth = p.w;
+
+      // Draw a short stroke along motion; in calm zone: shorter (quieter)
+      const strokeLen = (2.2 + 5.5 * (1 - calm)) * (0.7 + 0.3 * breath);
+      const vx = p.vx, vy = p.vy;
+      const vmag = Math.max(0.0001, Math.hypot(vx, vy));
+      const nx = vx / vmag, ny = vy / vmag;
+
+      ctx.beginPath();
+      ctx.moveTo(ox, oy);
+      ctx.lineTo(ox - nx * strokeLen, oy - ny * strokeLen);
+      ctx.stroke();
+
+      // Occasionally: tiny "spark" far from pointer (subtle secret)
+      p.life += dt;
+      if (p.life > 900 + Math.random() * 900) {
+        p.life = 0;
+        if (d > calmRadius * 1.1) {
+          ctx.fillStyle = `rgba(255,255,255,0.035)`;
+          ctx.fillRect(p.x, p.y, 1, 1);
+        }
+      }
+    }
+
+    // A very subtle halo around pointer (calm presence)
+    const halo = ctx.createRadialGradient(pointer.x, pointer.y, 0, pointer.x, pointer.y, calmRadius * 0.9);
+    halo.addColorStop(0, "rgba(255,255,255,0.035)");
+    halo.addColorStop(1, "rgba(255,255,255,0)");
+    ctx.globalCompositeOperation = "screen";
+    ctx.fillStyle = halo;
+    ctx.fillRect(pointer.x - calmRadius, pointer.y - calmRadius, calmRadius * 2, calmRadius * 2);
+
+    requestAnimationFrame(step);
+  }
+
+  // Start with a clean frame
+  ctx.fillStyle = "#05060a";
+  ctx.fillRect(0, 0, W, H);
+  requestAnimationFrame(step);
+})();
