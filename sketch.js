@@ -1,43 +1,16 @@
-// Festive Generative Lights — Mobile-first Edition
-// Touch: Tap gift = firework, Long-press gift = MEGA firework, Swipe = wind
-// Adds: Score + combo (HO HO HO)
+// Generative Heart Field (p5.js)
+// Touch: tap = reseed, drag = wind, two-finger = stronger pulse
+// Mobile-first, fullscreen, dark background, luminous heart emerges from flow particles.
 
 let seed = 0;
-let paused = false;
-
-let cells = [];
-let glitter = [];
-let gifts = [];
-let fireworks = [];
-
+let particles = [];
 let t0 = 0;
 
-// touch / fun
-let wind = 0;
-let touchStartPos = null;
-let longPressTimer = null;
-let longPressFired = false;
+let windX = 0;
+let windY = 0;
 
-// scoring
-let score = 0;
-let combo = 0;
-let lastHitMs = 0;
-let toast = { text: "", until: 0 };
-
-// mobile scaling
-let uiScale = 1;     // based on screen size
-let fxScale = 1;     // fireworks scale (bigger on phone)
-let lineScale = 1;   // thicker strokes on phone
-
-function recomputeScales() {
-  const m = min(windowWidth, windowHeight);
-  // UI scale: readable on phones but not huge on desktop
-  uiScale = map(m, 320, 1200, 1.2, 1.0, true);
-  // FX scale: make fireworks noticeably larger on small screens
-  fxScale = map(m, 320, 1200, 1.75, 1.15, true);
-  // thicker lines on small screens
-  lineScale = map(m, 320, 1200, 1.6, 1.0, true);
-}
+let pulse = 0;
+let pulseBoost = 0;
 
 function reseed() {
   seed = (Date.now() ^ (Math.random() * 1e9)) >>> 0;
@@ -45,566 +18,264 @@ function reseed() {
   noiseSeed(seed);
   t0 = random(1000);
 
-  cells = [];
-  glitter = [];
-  gifts = [];
-  fireworks = [];
+  particles = [];
+  const m = min(width, height);
 
-  const n = floor(map(min(width, height), 320, 1400, 70, 150, true));
-  for (let i = 0; i < n; i++) {
-    cells.push({
-      x: random(width),
-      y: random(height),
-      r: random(18, 78) * (1.0 + (fxScale - 1) * 0.2),
-      a: random(0.06, 0.22),
-      wob: random(0.6, 2.2),
-      hue: random(0, 360),
-      drift: random(0.2, 1.2)
-    });
+  // particle count scales with screen
+  const N = floor(map(m, 320, 1400, 1600, 5200, true));
+
+  for (let i = 0; i < N; i++) {
+    particles.push(makeParticle(i));
   }
-
-  const g = floor(map(min(width, height), 320, 1400, 260, 620, true));
-  for (let i = 0; i < g; i++) {
-    glitter.push({
-      x: random(width),
-      y: random(height),
-      v: random(0.4, 1.8) * (1.0 + (fxScale - 1) * 0.15),
-      p: random(TAU),
-      s: random(0.9, 3.2) * lineScale,
-      tw: random(0.02, 0.12)
-    });
-  }
-
-  const giftCount = floor(map(min(width, height), 320, 1400, 12, 28, true));
-  for (let i = 0; i < giftCount; i++) gifts.push(makeGift());
 }
 
 function setup() {
   createCanvas(windowWidth, windowHeight);
   pixelDensity(min(2, displayDensity()));
   colorMode(HSB, 360, 100, 100, 1);
-  noFill();
-  recomputeScales();
+  background(230, 20, 4);
   reseed();
 }
 
 function windowResized() {
   resizeCanvas(windowWidth, windowHeight);
-  recomputeScales();
+  background(230, 20, 4);
   reseed();
 }
 
 // ---------------------------
-// Touch / Mouse input (mobile-first)
+// Touch / mouse
 // ---------------------------
 function touchStarted() {
-  if (paused) return false;
-
-  const x = touches?.[0]?.x ?? mouseX;
-  const y = touches?.[0]?.y ?? mouseY;
-
-  startPress(x, y);
+  // Tap reseed if it's a short touch
+  if (touches && touches.length === 2) {
+    pulseBoost = 1.0; // two-finger = stronger pulse
+  }
   return false;
 }
 
 function touchMoved() {
-  if (paused) return false;
-
-  // swipe -> wind (stronger on phone)
-  if (touches && touches.length) {
-    wind += constrain(movedX * 0.06, -1.6, 1.6);
-  }
+  // drag = wind
+  windX += constrain(movedX * 0.015, -0.9, 0.9);
+  windY += constrain(movedY * 0.015, -0.9, 0.9);
   return false;
 }
 
 function touchEnded() {
-  if (paused) return false;
-  endPress();
+  // if it was basically a tap (no drag), reseed
+  // (p5 doesn't give tap detection perfectly; this is a simple heuristic)
+  if (abs(movedX) < 2 && abs(movedY) < 2) reseed();
+  pulseBoost = 0.0;
   return false;
 }
 
-// desktop mouse fallback
 function mousePressed() {
-  if (paused) return;
-  startPress(mouseX, mouseY);
-}
-function mouseReleased() {
-  if (paused) return;
-  endPress();
+  reseed();
 }
 
-function startPress(x, y) {
-  touchStartPos = { x, y };
-  longPressFired = false;
-
-  if (longPressTimer) clearTimeout(longPressTimer);
-  longPressTimer = setTimeout(() => {
-    if (!touchStartPos) return;
-    longPressFired = true;
-    handleTap(touchStartPos.x, touchStartPos.y, true);
-  }, 520);
-}
-
-function endPress() {
-  if (longPressTimer) clearTimeout(longPressTimer);
-
-  if (longPressFired) {
-    touchStartPos = null;
-    return;
-  }
-
-  if (touchStartPos) handleTap(touchStartPos.x, touchStartPos.y, false);
-  touchStartPos = null;
-}
-
-function handleTap(x, y, mega) {
-  const idx = hitGift(x, y);
-  if (idx >= 0) {
-    const g = gifts[idx];
-    g.alive = false;
-
-    popGiftToFirework(g, mega);
-    registerHit(mega);
-
-    // respawn gift quickly
-    setTimeout(() => {
-      gifts[idx] = makeGift();
-    }, mega ? 520 : 300);
-  } else {
-    // tap empty space: little spark (still visible)
-    fireworks.push(makeRocket(x, y, mega ? 2.0 : 1.2, true));
-  }
-}
-
-function registerHit(mega) {
-  const now = millis();
-  if (now - lastHitMs < 1500) combo++;
-  else combo = 1;
-  lastHitMs = now;
-
-  const add = (mega ? 40 : 15) + (combo - 1) * 7;
-  score += add;
-
-  if (combo >= 2) toast.text = `HO HO HO ×${combo}`;
-  else toast.text = mega ? "MEGA!" : "POP!";
-  toast.until = now + 900;
+function mouseDragged() {
+  windX += constrain(movedX * 0.012, -0.8, 0.8);
+  windY += constrain(movedY * 0.012, -0.8, 0.8);
 }
 
 // ---------------------------
-// Draw loop
+// Core: heart attractor + flow field
 // ---------------------------
+
 function draw() {
-  // gentle wind decay
-  wind *= 0.965;
-  wind = constrain(wind, -10, 10);
+  // soft trail (keeps it luminous)
+  background(230, 20, 4, 0.10);
 
-  // subtle trail for glow build-up
-  background(230, 25, 3.5, 0.18);
+  // wind decays
+  windX *= 0.96;
+  windY *= 0.96;
+  windX = constrain(windX, -8, 8);
+  windY = constrain(windY, -8, 8);
 
-  const t = t0 + frameCount * 0.008;
+  // pulse
+  pulse = 0.5 + 0.5 * sin(frameCount * 0.06 + t0);
+  const pulseAmp = (0.35 + 0.75 * pulse) * (1.0 + 0.85 * pulseBoost);
 
-  drawCellularLights(t);
-  drawGlitter(t);
-  drawGifts(t);
-  updateFireworks();
-  drawSanta(t);
-  vignette();
+  // draw heart scaffold very subtly (optional vibe)
+  drawHeartHalo(pulseAmp);
+
+  // update particles
+  const t = t0 + frameCount * 0.007;
+  for (let p of particles) {
+    stepParticle(p, t, pulseAmp);
+    renderParticle(p, t, pulseAmp);
+  }
+
+  // small HUD on canvas (touch instructions)
   drawHUD();
 }
 
-// ---------------------------
-// Visual language helpers
-// ---------------------------
-function festivePalette(h) {
-  const pick = (h + noise(h * 0.02, seed * 0.00001) * 140) % 360;
-  const bands = [8, 30, 55, 140, 165, 190, 210, 320, 340];
-  const target = bands[floor(map(noise(h * 0.03), 0, 1, 0, bands.length))];
-  const out = lerp(pick, target, 0.55);
-  return (out + 360) % 360;
-}
-
-function drawCellularLights(t) {
-  for (const c of cells) {
-    const nx = noise(c.x * 0.0016, c.y * 0.0016, t * 0.6);
-    const ny = noise(c.x * 0.0016 + 10, c.y * 0.0016 + 10, t * 0.6);
-    const dx = (nx - 0.5) * 180 * c.drift;
-    const dy = (ny - 0.5) * 180 * c.drift;
-
-    const x = (c.x + dx + width) % width;
-    const y = (c.y + dy + height) % height;
-
-    const h = festivePalette(c.hue + sin(t * c.wob) * 40);
-    const sat = 80 + 20 * noise(x * 0.002, y * 0.002);
-    const bri = 70 + 30 * noise(x * 0.002 + 5, y * 0.002 + 5);
-
-    for (let k = 0; k < 5; k++) {
-      const rr = c.r * (1 + k * 0.22);
-      const a = c.a * (1 - k * 0.18);
-      stroke(h, sat, bri, a);
-      strokeWeight((1.4 + k * 1.1) * lineScale);
-      circle(x, y, rr * 2);
-    }
-
-    stroke(h, sat, 95, 0.12);
-    strokeWeight(1.2 * lineScale);
-    circle(x, y, c.r * 0.7);
-  }
-}
-
-function drawGlitter(t) {
-  for (const g of glitter) {
-    g.p += g.tw;
-    g.y += g.v;
-    g.x += sin(g.p + t) * 0.45 + wind * 0.55;
-
-    if (g.y > height + 30) {
-      g.y = -30;
-      g.x = random(width);
-    }
-    if (g.x < -40) g.x = width + 40;
-    if (g.x > width + 40) g.x = -40;
-
-    const n = noise(g.x * 0.004, g.y * 0.004, t * 0.8);
-    const h = festivePalette(180 + n * 240);
-    const a = 0.08 + n * 0.14;
-
-    strokeWeight(g.s * 1.15);
-    stroke(h, 30, 100, a);
-    point(g.x, g.y);
-
-    if (n > 0.88) {
-      strokeWeight(1.5 * lineScale);
-      stroke(h, 45, 100, 0.11);
-      line(g.x - 8, g.y, g.x + 8, g.y);
-      line(g.x, g.y - 8, g.x, g.y + 8);
-    }
-  }
-}
-
-function vignette() {
-  noStroke();
-  for (let i = 0; i < 10; i++) {
-    const a = 0.04 * (i / 10);
-    fill(230, 30, 2, a);
-    rect(-i * 12, -i * 12, width + i * 24, height + i * 24);
-  }
-  noFill();
-}
-
-// ---------------------------
-// Santa (stylized neon silhouette)
-// ---------------------------
-function drawSanta(t) {
-  push();
-  translate(width * 0.5 + sin(t * 0.6) * 120, height * 0.42 + cos(t * 0.4) * 80);
-  const sc = min(width, height) * 0.00225 * (1.0 + (fxScale - 1) * 0.10);
-  scale(sc);
-  rotate(sin(t * 0.3) * 0.05);
-
-  // glow layers (thicker on phone)
-  for (let i = 8; i > 0; i--) {
-    stroke(0, 80, 100, 0.022);
-    strokeWeight(i * 9 * lineScale);
-    santaShape();
-  }
-
-  stroke(0, 85, 95, 0.88);
-  strokeWeight(7 * lineScale);
-  santaShape();
-
-  pop();
-}
-
-function santaShape() {
-  // hat
-  beginShape();
-  vertex(-20, -60);
-  vertex(0, -95);
-  vertex(35, -55);
-  endShape();
-
-  // head
-  ellipse(5, -35, 35, 30);
-
-  // beard
-  beginShape();
-  vertex(-20, -25);
-  vertex(-10, 10);
-  vertex(25, 10);
-  vertex(30, -20);
-  endShape(CLOSE);
-
-  // body
-  beginShape();
-  vertex(-35, 10);
-  vertex(-45, 70);
-  vertex(45, 70);
-  vertex(35, 10);
-  endShape(CLOSE);
-
-  // belt hint
-  line(-28, 38, 28, 38);
-}
-
-// ---------------------------
-// Gifts (tap targets)
-// ---------------------------
-function makeGift() {
-  const s = random(38, 80) * (1.0 + (fxScale - 1) * 0.15);
-  const hue = random([0, 12, 40, 140, 165, 190]); // red/gold/green/ice
+function makeParticle(i) {
+  const m = min(width, height);
   return {
-    x: random(s, width - s),
-    y: random(s, height - s),
-    s,
-    vx: random(-0.42, 0.42),
-    vy: random(-0.30, 0.30),
-    hue,
-    wob: random(0.6, 1.6),
-    alive: true
+    // start scattered
+    x: random(width),
+    y: random(height),
+    vx: random(-0.5, 0.5),
+    vy: random(-0.5, 0.5),
+    // personal color bias
+    h0: random([350, 0, 10, 320, 200]), // reds + a hint of cyan
+    w: random(0.7, 2.2) * map(m, 320, 1400, 1.4, 1.0, true),
+    a: random(0.04, 0.14),
+    phase: random(TAU),
+    age: random(0, 1000)
   };
 }
 
-function drawGifts(t) {
-  for (const g of gifts) {
-    if (!g.alive) continue;
-    drawGift(g, t);
-  }
+// Parametric heart curve (classic)
+function heartPoint(u) {
+  // u in [0..TAU]
+  // produces points roughly in range [-16..16] horizontally, [-17..13] vertically
+  const x = 16 * pow(sin(u), 3);
+  const y = 13 * cos(u) - 5 * cos(2 * u) - 2 * cos(3 * u) - cos(4 * u);
+  return { x, y: -y }; // flip y for screen coords
 }
 
-function drawGift(g, t) {
-  g.x += g.vx + sin(t * g.wob) * 0.25 + wind * 0.14;
-  g.y += g.vy + cos(t * g.wob) * 0.18;
-  if (g.x < g.s || g.x > width - g.s) g.vx *= -1;
-  if (g.y < g.s || g.y > height - g.s) g.vy *= -1;
-  g.x = constrain(g.x, g.s, width - g.s);
-  g.y = constrain(g.y, g.s, height - g.s);
+function heartTarget(t, pulseAmp) {
+  // A slowly precessing u value for motion on the heart perimeter
+  const u = (t * 1.05) % TAU;
+  const p = heartPoint(u);
 
-  const x = g.x, y = g.y, s = g.s;
+  // scale & center
+  const m = min(width, height);
+  const s = (m * 0.030) * (1.0 + 0.07 * sin(t * 1.7)) * (0.85 + 0.35 * pulseAmp);
 
-  // “look at me” sparkle aura
-  const halo = 0.07 + 0.04 * sin(t * 2.2 + x * 0.01);
-  stroke((g.hue + 40) % 360, 30, 100, halo);
-  strokeWeight(1.2 * lineScale);
-  for (let k = 0; k < 12; k++) {
-    const a = (k / 12) * TAU;
-    point(x + cos(a) * (s * 0.9), y + sin(a) * (s * 0.9));
-  }
-
-  rectMode(CENTER);
-
-  // glow
-  for (let k = 5; k >= 1; k--) {
-    stroke(g.hue, 85, 100, 0.050);
-    strokeWeight(k * 7 * lineScale);
-    rect(x, y, s, s, 12);
-  }
-
-  // box
-  stroke(g.hue, 80, 95, 0.62);
-  strokeWeight(2.6 * lineScale);
-  rect(x, y, s, s, 12);
-
-  // ribbon
-  stroke((g.hue + 180) % 360, 40, 100, 0.62);
-  strokeWeight(3.6 * lineScale);
-  line(x - s * 0.22, y - s * 0.48, x - s * 0.22, y + s * 0.48);
-  line(x + s * 0.22, y - s * 0.48, x + s * 0.22, y + s * 0.48);
-  line(x - s * 0.48, y, x + s * 0.48, y);
-
-  // bow
-  strokeWeight(2.4 * lineScale);
-  noFill();
-  arc(x - s * 0.12, y - s * 0.36, s * 0.30, s * 0.24, PI, TWO_PI);
-  arc(x + s * 0.12, y - s * 0.36, s * 0.30, s * 0.24, PI, TWO_PI);
-  noFill();
-}
-
-function hitGift(px, py) {
-  for (let i = gifts.length - 1; i >= 0; i--) {
-    const g = gifts[i];
-    if (!g.alive) continue;
-    const half = g.s * 0.60; // generous hitbox for phones
-    if (px >= g.x - half && px <= g.x + half && py >= g.y - half && py <= g.y + half) {
-      return i;
-    }
-  }
-  return -1;
-}
-
-// ---------------------------
-// Fireworks (BIG + visible on mobile)
-// ---------------------------
-function popGiftToFirework(g, mega) {
-  fireworks.push(makeRocket(g.x, g.y, mega ? 2.8 : 1.9, false, g.hue));
-}
-
-function makeRocket(x, y, power = 1.6, sparkleOnly = false, hueOverride = null) {
-  const h = hueOverride != null ? hueOverride : festivePalette(x + y);
   return {
-    x, y,
-    vx: random(-0.7, 0.7) + wind * 0.12,
-    vy: sparkleOnly ? random(-6.0, -8.0) : random(-12.0, -16.0) * power * 0.35,
-    hue: h,
-    life: 0,
-    explodeAt: sparkleOnly ? floor(random(10, 16)) : floor(random(14, 22)),
-    exploded: false,
-    parts: null,
-    power
+    x: width * 0.5 + p.x * s,
+    y: height * 0.48 + p.y * s
   };
 }
 
-function updateFireworks() {
-  for (let i = fireworks.length - 1; i >= 0; i--) {
-    const r = fireworks[i];
-    r.life++;
+function stepParticle(p, t, pulseAmp) {
+  p.age += 1;
 
-    if (!r.exploded) {
-      // SUPER visible rocket
-      const w = (6.5 * lineScale) * (0.9 + r.power * 0.22) * fxScale;
-      strokeWeight(w);
-      stroke(r.hue, 85, 100, 0.55);
-      point(r.x, r.y);
+  // Flow field
+  const n = noise(p.x * 0.0022, p.y * 0.0022, t);
+  const ang = n * TAU * 2;
+  const fx = cos(ang);
+  const fy = sin(ang);
 
-      // fat glowing trail
-      strokeWeight(w * 0.75);
-      stroke(r.hue, 65, 100, 0.16);
-      line(r.x, r.y + 30 * fxScale, r.x - r.vx * 8, r.y + 60 * fxScale);
+  // Heart attractor: each particle chases a slightly different point on the heart
+  const u = (t * 0.85 + p.phase + (p.age * 0.0008)) % TAU;
+  const hp = heartPoint(u);
 
-      r.x += r.vx;
-      r.y += r.vy;
-      r.vy += 0.16;       // gravity
-      r.vx += wind * 0.007;
+  const m = min(width, height);
+  const s = (m * 0.030) * (0.85 + 0.35 * pulseAmp);
+  const hx = width * 0.5 + hp.x * s;
+  const hy = height * 0.48 + hp.y * s;
 
-      if (r.life >= r.explodeAt || r.vy > -0.8) {
-        r.exploded = true;
+  // Direction to heart point
+  const dx = hx - p.x;
+  const dy = hy - p.y;
+  const d = sqrt(dx * dx + dy * dy) + 1e-6;
 
-        const parts = [];
-        const baseN = (sparkleCount(r.power)) * (fxScale * 1.2);
-        const n = floor(baseN);
+  // Attraction strength increases when far, softens when close (creates a crisp outline)
+  const pull = (0.9 + 1.4 * pulseAmp) * (0.7 + 0.6 * (1 - exp(-d / (m * 0.12))));
+  const ax = (dx / d) * pull;
+  const ay = (dy / d) * pull;
 
-        for (let k = 0; k < n; k++) {
-          const a = (k / n) * TAU;
-          const sp = random(3.0, 13.0) * (0.75 + noise(k * 0.2) * 0.8) * (0.7 + r.power * 0.25) * fxScale;
-          parts.push({
-            x: r.x, y: r.y,
-            vx: cos(a) * sp + wind * 0.45,
-            vy: sin(a) * sp,
-            hue: (r.hue + random(-22, 22) + 360) % 360,
-            a: 0.40,
-            w: random(3.0, 7.2) * lineScale * (0.9 + r.power * 0.18) * fxScale,
-            ttl: floor(random(38, 86) * (0.9 + r.power * 0.18)),
-            sparkle: random() < 0.30
-          });
-        }
+  // Combine: flow + attraction + wind + tiny jitter
+  const jitter = 0.15 * (noise(p.phase + t) - 0.5);
+  p.vx += fx * 0.55 + ax * 0.18 + windX * 0.02 + jitter;
+  p.vy += fy * 0.55 + ay * 0.18 + windY * 0.02 + jitter;
 
-        // comedic “comets” (more esprit)
-        const comets = floor(4 * (0.9 + r.power * 0.2));
-        for (let c = 0; c < comets; c++) {
-          parts.push({
-            x: r.x, y: r.y,
-            vx: random(-6, 6) * fxScale + wind * 0.8,
-            vy: random(-6, 6) * fxScale,
-            hue: (r.hue + random(120, 220)) % 360,
-            a: 0.30,
-            w: random(5.0, 9.0) * lineScale * fxScale,
-            ttl: floor(random(44, 96)),
-            sparkle: true,
-            comet: true
-          });
-        }
+  // Velocity damping (keeps it stable)
+  p.vx *= 0.93;
+  p.vy *= 0.93;
 
-        r.parts = parts;
-      }
-    } else {
-      const parts = r.parts;
-      for (let p = parts.length - 1; p >= 0; p--) {
-        const s = parts[p];
-        s.ttl--;
+  // Move
+  p.x += p.vx;
+  p.y += p.vy;
 
-        s.x += s.vx;
-        s.y += s.vy;
-        s.vy += 0.12;
-        s.vx *= 0.982;
-        s.vy *= 0.982;
-        s.vx += wind * 0.004;
+  // Wrap-around for continuity
+  if (p.x < -20) p.x = width + 20;
+  if (p.x > width + 20) p.x = -20;
+  if (p.y < -20) p.y = height + 20;
+  if (p.y > height + 20) p.y = -20;
+}
 
-        // fade
-        s.a *= 0.965;
+function renderParticle(p, t, pulseAmp) {
+  // color evolves: mostly red/pink, sometimes gold/cyan glints
+  const glint = noise(p.x * 0.004, p.y * 0.004, t * 0.7);
+  let h = (p.h0 + 25 * sin(t + p.phase)) % 360;
 
-        // draw particle (BIG + bright)
-        strokeWeight(s.w);
-        stroke(s.hue, 80, 100, s.a);
-        point(s.x, s.y);
+  // occasional icy glint
+  if (glint > 0.86) h = 190 + 40 * (glint - 0.86) / 0.14;
 
-        // glow echo (makes it pop on phones)
-        strokeWeight(s.w * 1.55);
-        stroke(s.hue, 45, 100, s.a * 0.08);
-        point(s.x, s.y);
+  const sat = 65 + 35 * (0.5 + 0.5 * sin(p.phase + t * 1.3));
+  const bri = 70 + 30 * glint;
 
-        // sparkle cross sometimes
-        if (s.sparkle && (s.ttl % 6 === 0)) {
-          strokeWeight(2.2 * lineScale * fxScale);
-          stroke(s.hue, 35, 100, s.a * 0.22);
-          line(s.x - 10 * fxScale, s.y, s.x + 10 * fxScale, s.y);
-          line(s.x, s.y - 10 * fxScale, s.x, s.y + 10 * fxScale);
-        }
+  // alpha stronger near heart (approx: use noise as proxy + pulse)
+  const a = p.a * (0.7 + 0.7 * pulseAmp) * (0.8 + 0.6 * glint);
 
-        // comet streak
-        if (s.comet && (s.ttl % 2 === 0)) {
-          strokeWeight(3.0 * lineScale * fxScale);
-          stroke(s.hue, 55, 100, s.a * 0.16);
-          line(s.x, s.y, s.x - s.vx * 0.8, s.y - s.vy * 0.8);
-        }
+  // fat glow
+  strokeWeight(p.w * 2.2);
+  stroke(h, sat * 0.6, 100, a * 0.10);
+  point(p.x, p.y);
 
-        if (s.ttl <= 0 || s.a < 0.015) parts.splice(p, 1);
-      }
-      if (parts.length === 0) fireworks.splice(i, 1);
-    }
+  // core
+  strokeWeight(p.w);
+  stroke(h, sat, bri, a);
+  point(p.x, p.y);
+
+  // tiny star cross sometimes for “spark”
+  if (glint > 0.92) {
+    strokeWeight(1);
+    stroke(h, 40, 100, a * 0.35);
+    const s = 7 * (0.8 + 0.6 * pulseAmp);
+    line(p.x - s, p.y, p.x + s, p.y);
+    line(p.x, p.y - s, p.x, p.y + s);
   }
 }
 
-function sparkleCount(power) {
-  // bigger bursts (especially on mobile)
-  return 70 + power * 55;
+function drawHeartHalo(pulseAmp) {
+  // subtle glowing heart outline (not a solid line)
+  const steps = 220;
+  const m = min(width, height);
+  const s = (m * 0.030) * (0.85 + 0.35 * pulseAmp);
+
+  for (let layer = 4; layer >= 1; layer--) {
+    const a = 0.018 * layer;
+    stroke(350, 60, 100, a);
+    strokeWeight((layer * 2.2) * map(m, 320, 1400, 1.5, 1.0, true));
+
+    beginShape();
+    for (let i = 0; i <= steps; i++) {
+      const u = (i / steps) * TAU;
+      const p = heartPoint(u);
+      const x = width * 0.5 + p.x * s;
+      const y = height * 0.48 + p.y * s;
+      curveVertex(x, y);
+    }
+    endShape();
+  }
 }
 
-// ---------------------------
-// HUD (touch instructions + score)
-// ---------------------------
 function drawHUD() {
-  const now = millis();
-
-  // overlay text directly on canvas (no DOM needed)
   push();
   resetMatrix();
   textAlign(LEFT, TOP);
   noStroke();
 
-  const pad = 14 * uiScale;
-  const fontSize = 14 * uiScale;
-  textSize(fontSize);
+  const m = min(width, height);
+  const s = map(m, 320, 1200, 1.2, 1.0, true);
+  const pad = 14 * s;
 
-  // subtle background for readability
   fill(0, 0, 0, 0.18);
-  rect(pad - 8, pad - 8, 360 * uiScale, 88 * uiScale, 10);
+  rect(pad - 8, pad - 8, 340 * s, 62 * s, 10);
 
-  fill(0, 0, 100, 0.85);
-  text("Festive Pop!", pad, pad);
+  fill(0, 0, 100, 0.86);
+  textSize(14 * s);
+  text("Generative Heart", pad, pad);
 
-  fill(0, 0, 100, 0.70);
-  textSize(12 * uiScale);
-  text("Tap gift: firework   •   Long-press: MEGA   •   Swipe: wind", pad, pad + 20 * uiScale);
-
-  fill(0, 0, 100, 0.85);
-  textSize(13 * uiScale);
-  text(`Score: ${score}   Combo: x${combo}`, pad, pad + 42 * uiScale);
-
-  // toast
-  if (now < toast.until && toast.text) {
-    fill(0, 0, 100, 0.88);
-    textSize(22 * uiScale);
-    text(toast.text, pad, pad + 64 * uiScale);
-  }
+  fill(0, 0, 100, 0.68);
+  textSize(12 * s);
+  text("Tap: new heart  •  Drag: bend the field  •  Two-finger: pulse", pad, pad + 20 * s);
 
   pop();
 }
