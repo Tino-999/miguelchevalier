@@ -1,44 +1,24 @@
-// Alpine Story — p5.js
-// Act 1: Sunrise behind Alps
-// Act 2: Church tower appears
-// Act 3: Apple orchard grows
-// Touch: Tap = next act / restart, Swipe = wind
+// Storyboard Generative Scene — p5.js (mobile-first)
+// Tap: skip to next scene / fast-forward current
+// Swipe: wind (affects cloud/rain/water a bit)
 
 let seed = 0;
-
-let act = 1;            // 1..3
-let actStart = 0;       // frameCount when act began
 let wind = 0;
 
-let clouds = [];
-let trees = [];
-let apples = [];
+let scene = 0;
+let sceneStart = 0;
 
-function reseed() {
-  seed = (Date.now() ^ (Math.random() * 1e9)) >>> 0;
-  randomSeed(seed);
-  noiseSeed(seed);
-
-  act = 1;
-  actStart = frameCount;
-  wind = 0;
-
-  clouds = [];
-  trees = [];
-  apples = [];
-
-  const cloudCount = floor(map(min(windowWidth, windowHeight), 320, 1400, 6, 12, true));
-  for (let i = 0; i < cloudCount; i++) clouds.push(makeCloud());
-
-  // orchard placeholders (spawn later)
-  const treeCount = floor(map(min(width, height), 320, 1400, 10, 26, true));
-  for (let i = 0; i < treeCount; i++) trees.push(makeTree(i, treeCount));
-}
+let lake;
+let swimmer;
+let cloud;
+let carousel;
+let tower;
 
 function setup() {
   createCanvas(windowWidth, windowHeight);
   pixelDensity(min(2, displayDensity()));
   colorMode(HSB, 360, 100, 100, 1);
+  noFill();
   reseed();
 }
 
@@ -47,448 +27,635 @@ function windowResized() {
   reseed();
 }
 
-// ----------------- Input -----------------
-function touchStarted() { return false; }
+function reseed() {
+  seed = (Date.now() ^ (Math.random() * 1e9)) >>> 0;
+  randomSeed(seed);
+  noiseSeed(seed);
+
+  wind = 0;
+  scene = 0;
+  sceneStart = frameCount;
+
+  lake = { rip: random(1000) };
+  swimmer = { phase: random(TAU), x0: random(-0.25, 0.25) };
+  cloud = { x: -200, y: height * 0.18, vx: 1.5, raining: false, gone: false };
+  carousel = { ang: 0 };
+  tower = { grow: 0 };
+}
+
+// ---------------- Input ----------------
 function touchMoved() {
   wind += constrain(movedX * 0.03, -1.4, 1.4);
   return false;
 }
 function touchEnded() {
-  nextAct();
+  skipOrNext();
   return false;
 }
-function mousePressed() { nextAct(); }
+function mousePressed() {
+  skipOrNext();
+}
 
-function nextAct() {
-  // If current act still mid-animation, jump to its end
-  const p = actProgress();
-  if (p < 0.98) {
-    actStart -= 99999; // hack: makes progress ~1
-    return;
-  }
-  // advance act
-  if (act < 3) {
-    act++;
-    actStart = frameCount;
+function skipOrNext() {
+  const p = sceneProgress();
+  if (p < 0.92) {
+    // fast-forward current scene
+    sceneStart -= 999999;
   } else {
-    reseed();
+    // next scene
+    if (scene < 10) {
+      scene++;
+      sceneStart = frameCount;
+    } else {
+      reseed();
+    }
   }
 }
 
-function actProgress() {
-  // each act duration in frames (scaled a bit with screen size)
+function sceneProgress() {
   const m = min(width, height);
-  const speed = map(m, 320, 1400, 1.15, 0.85, true);
-  const dur = (act === 1) ? 380 : (act === 2 ? 320 : 520);
-  return constrain((frameCount - actStart) / (dur * speed), 0, 1);
+  const speed = map(m, 320, 1400, 1.2, 0.85, true);
+  const durations = [240, 260, 260, 260, 270, 300, 280, 320, 300, 320, 340];
+  const dur = durations[constrain(scene, 0, durations.length - 1)] * speed;
+  return constrain((frameCount - sceneStart) / dur, 0, 1);
 }
 
-// --------------- Draw loop ---------------
+// --------------- Draw ---------------
 function draw() {
-  wind *= 0.96;
-  wind = constrain(wind, -8, 8);
+  wind *= 0.965;
+  wind = constrain(wind, -10, 10);
 
-  // background sky depends on act 1 sunrise progress
-  const p1 = (act === 1) ? actProgress() : 1;
-  drawSky(p1);
+  // Determine global day/night factor based on scene (night arrives later)
+  const nightTarget = (scene >= 7) ? 1 : 0;
+  const nightMix = smoothstep(nightTarget ? mapSceneMix(7, 8) : 0); // 0..1
+  drawSky(nightMix);
 
-  // far glow / haze
-  drawHaze(p1);
+  // Matterhorn always (first thing)
+  drawMatterhorn(mapSceneMix(0, 1));
 
-  // Alps always present
-  drawAlps(p1);
+  // Sun rises (scene 1+)
+  if (scene >= 1) drawSun(mapSceneMix(1, 2), nightMix);
 
-  // Act 1: sun
-  if (act >= 1) drawSunrise(p1);
+  // Lake appears (scene 2+)
+  if (scene >= 2) drawLake(mapSceneMix(2, 3), nightMix);
 
-  // clouds always, slightly different mood early/late
-  drawClouds();
+  // Swimmer (scene 3+)
+  if (scene >= 3) drawSwimmer(mapSceneMix(3, 4));
 
-  // Act 2+: church tower
-  if (act >= 2) {
-    const p2 = (act === 2) ? actProgress() : 1;
-    drawChurchTower(p2);
-  }
+  // Oktoberfest tent (scene 4+)
+  if (scene >= 4) drawTent(mapSceneMix(4, 5));
 
-  // Act 3: orchard grows
-  if (act >= 3) {
-    const p3 = actProgress();
-    drawOrchard(p3);
-  }
+  // Bavarian schuhplattler dancer (scene 5+)
+  if (scene >= 5) drawDancer(mapSceneMix(5, 6));
 
-  drawGroundForeground();
+  // Big oak (scene 6+)
+  if (scene >= 6) drawOak(mapSceneMix(6, 7), nightMix);
+
+  // Cloud flies in, rains over oak, then leaves (scene 7+)
+  if (scene >= 7) drawCloudAndRain(mapSceneMix(7, 9), nightMix);
+
+  // Night + moon rises (scene 8+)
+  if (scene >= 8) drawMoon(mapSceneMix(8, 9), nightMix);
+
+  // Carousel with white elephant (scene 9+)
+  if (scene >= 9) drawCarousel(mapSceneMix(9, 10), nightMix);
+
+  // Tower forms (scene 10)
+  if (scene >= 10) drawTower(mapSceneMix(10, 11), nightMix);
 
   drawHUD();
 }
 
-// ----------------- Scene elements -----------------
-function drawSky(pSun) {
-  // pSun 0..1 controls dawn -> day
-  // Use vertical gradient with HSB
+// Helper: returns a smooth 0..1 fade for a scene interval [a..b]
+function mapSceneMix(a, b) {
+  if (scene < a) return 0;
+  if (scene > b) return 1;
+  // if scene == a use its progress; if between, treat as 1
+  if (scene === a) return smoothstep(sceneProgress());
+  if (scene === b) return 0; // will be driven by next call
+  return 1;
+}
+
+// ---------------- Visuals ----------------
+function drawSky(nightMix) {
   noStroke();
   for (let y = 0; y < height; y += 3) {
     const t = y / height;
 
-    // dawn: deep blue -> warm orange near horizon
-    const hDawnTop = 220, sDawnTop = 55, bDawnTop = 18;
-    const hDawnHor = 25,  sDawnHor = 70, bDawnHor = 30;
+    // day gradient
+    const hDayTop = 205, sDayTop = 40, bDayTop = 36;
+    const hDayHor = 195, sDayHor = 20, bDayHor = 48;
 
-    // day: rich blue -> pale near horizon
-    const hDayTop  = 205, sDayTop  = 45, bDayTop  = 35;
-    const hDayHor  = 195, sDayHor  = 25, bDayHor  = 45;
+    // night gradient
+    const hNigTop = 235, sNigTop = 55, bNigTop = 10;
+    const hNigHor = 230, sNigHor = 45, bNigHor = 14;
 
-    const hTop = lerp(hDawnTop, hDayTop, pSun);
-    const sTop = lerp(sDawnTop, sDayTop, pSun);
-    const bTop = lerp(bDawnTop, bDayTop, pSun);
+    const hTop = lerp(hDayTop, hNigTop, nightMix);
+    const sTop = lerp(sDayTop, sNigTop, nightMix);
+    const bTop = lerp(bDayTop, bNigTop, nightMix);
 
-    const hHor = lerp(hDawnHor, hDayHor, pSun);
-    const sHor = lerp(sDawnHor, sDayHor, pSun);
-    const bHor = lerp(bDawnHor, bDayHor, pSun);
+    const hHor = lerp(hDayHor, hNigHor, nightMix);
+    const sHor = lerp(sDayHor, sNigHor, nightMix);
+    const bHor = lerp(bDayHor, bNigHor, nightMix);
 
-    const h = lerp(hTop, hHor, pow(t, 1.7));
-    const s = lerp(sTop, sHor, pow(t, 1.7));
-    const b = lerp(bTop, bHor, pow(t, 1.7));
-
-    fill(h, s, b, 1);
+    const e = pow(t, 1.7);
+    fill(lerp(hTop, hHor, e), lerp(sTop, sHor, e), lerp(bTop, bHor, e), 1);
     rect(0, y, width, 3);
   }
-}
 
-function drawHaze(pSun) {
-  // subtle horizon haze
-  noStroke();
-  const horizon = height * 0.62;
-  for (let i = 0; i < 8; i++) {
-    const a = 0.06 * (1 - i / 8) * (0.4 + 0.6 * pSun);
-    fill(30, 20, 100, a);
-    rect(0, horizon - i * 18, width, 28);
-  }
-}
-
-function drawAlps(pSun) {
-  // layered mountain silhouettes
-  const horizon = height * 0.62;
-  const layers = 3;
-  for (let L = 0; L < layers; L++) {
-    const z = L / (layers - 1);
-    const yBase = horizon + z * 70;
-    const amp = lerp(130, 55, z);
-    const freq = lerp(0.006, 0.012, z);
-
-    // color: farther = lighter, closer = darker
-    const h = 220;
-    const s = lerp(18, 30, 1 - z);
-    const b = lerp(18, 10, 1 - z) + 12 * pSun;
-    fill(h, s, b, 1);
-    noStroke();
-
-    beginShape();
-    vertex(0, height);
-    for (let x = 0; x <= width; x += 16) {
-      const n = noise(seed * 0.0001 + x * freq, 0.7 + z * 3);
-      const ridge = yBase - n * amp - pow(noise(x * freq * 1.6, z * 2.2), 2) * 40;
-      curveVertex(x, ridge);
+  // stars at night
+  if (nightMix > 0.25) {
+    const a = 0.22 * (nightMix - 0.25) / 0.75;
+    stroke(0, 0, 100, a);
+    strokeWeight(1);
+    const n = floor(map(min(width, height), 320, 1400, 70, 220, true));
+    randomSeed(seed + 12345);
+    for (let i = 0; i < n; i++) {
+      const x = random(width);
+      const y = random(height * 0.55);
+      point(x, y);
     }
-    vertex(width, height);
-    endShape(CLOSE);
-
-    // snow caps (subtle) on front layer when sun is up
-    if (L === 1 || L === 2) drawSnowCaps(yBase, amp, freq, z, pSun);
   }
 }
 
-function drawSnowCaps(yBase, amp, freq, z, pSun) {
-  if (pSun < 0.4) return;
+function drawMatterhorn(intro) {
+  // silhouette mountain with slight highlight later
+  const horizon = height * 0.62;
+  const baseY = horizon + 90 * (1 - intro);
+  const peakX = width * 0.46;
+  const peakY = horizon - 210 * intro;
+  const leftX = width * 0.18;
+  const rightX = width * 0.74;
+
+  // glow
   noFill();
-  stroke(0, 0, 100, 0.08 * pSun);
-  strokeWeight(1.1);
-
-  beginShape();
-  for (let x = 0; x <= width; x += 18) {
-    const n = noise(seed * 0.0001 + x * freq, 0.7 + z * 3);
-    const ridge = yBase - n * amp;
-    const cap = ridge + 10 + noise(x * 0.02, z * 4) * 10;
-    curveVertex(x, cap);
-  }
-  endShape();
-}
-
-function drawSunrise(p) {
-  // sun rises behind mountains: from below horizon to above
-  const horizon = height * 0.62;
-  const x = width * 0.5 + sin((seed % 1000) * 0.01) * width * 0.08;
-  const y = lerp(horizon + 70, horizon - 90, smoothstep(p));
-  const r = lerp(28, 60, smoothstep(p)) * map(min(width, height), 320, 1400, 1.25, 1.0, true);
-
-  // glow
-  noStroke();
-  for (let i = 10; i >= 1; i--) {
-    const a = 0.035 * i * (0.6 + 0.8 * p);
-    fill(35, 70, 100, a * 0.08);
-    circle(x, y, r * (1 + i * 0.25));
-  }
-
-  // core
-  fill(38, 80, 100, 0.95);
-  circle(x, y, r * 1.1);
-
-  // rays (subtle)
-  stroke(38, 55, 100, 0.10 * p);
-  strokeWeight(1);
-  for (let k = 0; k < 20; k++) {
-    const a = (k / 20) * TAU;
-    const rr1 = r * 1.25;
-    const rr2 = r * 1.75 + noise(k * 0.2, seed * 0.001) * 18;
-    line(x + cos(a) * rr1, y + sin(a) * rr1, x + cos(a) * rr2, y + sin(a) * rr2);
-  }
-}
-
-function makeCloud() {
-  return {
-    x: random(width),
-    y: random(height * 0.08, height * 0.38),
-    s: random(0.6, 1.3),
-    v: random(0.12, 0.35),
-    p: random(1000),
-  };
-}
-
-function drawClouds() {
-  const mood = (act === 1) ? actProgress() : 1; // brighter later
-  for (let c of clouds) {
-    c.x += c.v + wind * 0.10;
-    c.p += 0.006;
-    if (c.x > width + 160) c.x = -160;
-
-    const a = 0.06 + 0.05 * mood;
-    noStroke();
-    // layered puffs
-    const base = 0.65 + 0.35 * noise(c.p);
-    for (let i = 0; i < 6; i++) {
-      const ox = (i - 2.5) * 40 * c.s + noise(c.p + i) * 18;
-      const oy = noise(c.p + 10 + i) * 14;
-      const rr = 70 * c.s * (0.75 + 0.35 * noise(c.p + 30 + i)) * base;
-      fill(0, 0, 100, a * (0.55 - i * 0.04));
-      circle(c.x + ox, c.y + oy, rr);
-    }
-  }
-}
-
-function drawChurchTower(p) {
-  // build from ground up near right third (Bavarian vibe)
-  const groundY = height * 0.78;
-  const x = width * 0.72;
-  const w = min(width, height) * 0.075;
-  const h = min(width, height) * 0.42;
-
-  const grow = smoothstep(p);
-
-  // silhouette with soft glow
-  push();
-  translate(x, groundY);
-  const hh = h * grow;
-
-  // glow
-  for (let k = 6; k >= 1; k--) {
-    stroke(45, 25, 100, 0.02);
-    strokeWeight(k * 6);
-    noFill();
-    churchShape(w, hh);
+  for (let k = 7; k >= 1; k--) {
+    stroke(220, 30, 100, 0.012 * intro);
+    strokeWeight(k * 10);
+    beginShape();
+    vertex(leftX, baseY);
+    vertex(peakX, peakY);
+    vertex(rightX, baseY);
+    endShape();
   }
 
   // body
-  stroke(40, 12, 95, 0.55);
-  strokeWeight(2.2);
-  fill(35, 8, 20, 0.65);
-  churchShapeFilled(w, hh);
+  noStroke();
+  fill(225, 22, 12, 1);
+  beginShape();
+  vertex(0, height);
+  vertex(leftX, baseY);
+  vertex(peakX, peakY);
+  vertex(rightX, baseY);
+  vertex(width, height);
+  endShape(CLOSE);
 
-  // windows (appear late)
-  if (p > 0.55) {
-    const ww = w * 0.18;
-    const wy = -hh * 0.55;
-    noStroke();
-    fill(50, 60, 100, 0.22);
-    rect(-ww * 0.5, wy, ww, ww * 1.6, 6);
-    rect(-ww * 0.5, wy + ww * 2.1, ww, ww * 1.6, 6);
+  // snow cap hint (subtle)
+  if (intro > 0.5) {
+    stroke(0, 0, 100, 0.10 * (intro - 0.5) / 0.5);
+    strokeWeight(2);
+    noFill();
+    beginShape();
+    vertex(peakX - 30, peakY + 55);
+    vertex(peakX, peakY + 40);
+    vertex(peakX + 40, peakY + 70);
+    endShape();
+  }
+}
+
+function drawSun(p, nightMix) {
+  const horizon = height * 0.62;
+  const x = width * 0.58;
+  const y = lerp(horizon + 80, horizon - 120, smoothstep(p));
+  const r = min(width, height) * 0.055 * (0.75 + 0.35 * p) * (1 - 0.9 * nightMix);
+
+  if (nightMix > 0.6) return;
+
+  noStroke();
+  for (let i = 10; i >= 1; i--) {
+    fill(38, 75, 100, 0.012 * i * p);
+    circle(x, y, r * (1 + i * 0.28));
+  }
+  fill(38, 80, 100, 0.9);
+  circle(x, y, r * 1.1);
+}
+
+function drawLake(p, nightMix) {
+  const horizon = height * 0.62;
+  const y0 = horizon + 60;
+  const y1 = height * 0.92;
+
+  // lake shape
+  noStroke();
+  const h = lerp(200, 220, nightMix);
+  const s = lerp(45, 35, nightMix);
+  const b = lerp(22, 12, nightMix);
+
+  fill(h, s, b, 0.90 * p);
+  beginShape();
+  vertex(0, y0);
+  vertex(width, y0);
+  vertex(width, y1);
+  vertex(0, y1);
+  endShape(CLOSE);
+
+  // ripples
+  stroke(h, s, 55, 0.10 * p);
+  strokeWeight(1.2);
+  lake.rip += 0.01;
+  for (let i = 0; i < 24; i++) {
+    const yy = y0 + i * (y1 - y0) / 24;
+    const amp = (2 + i * 0.25) * p;
+    beginShape();
+    for (let x = 0; x <= width; x += 18) {
+      const n = noise(x * 0.01, yy * 0.01, lake.rip);
+      const wv = sin(x * 0.02 + lake.rip * 2 + i) * amp + (n - 0.5) * amp;
+      curveVertex(x, yy + wv + wind * 0.05);
+    }
+    endShape();
+  }
+}
+
+function drawSwimmer(p) {
+  const horizon = height * 0.62;
+  const y0 = horizon + 60;
+  const y1 = height * 0.92;
+
+  const t = frameCount * 0.03 + swimmer.phase;
+  const x = width * (0.48 + swimmer.x0) + sin(t * 0.7) * 120;
+  const y = lerp(y1, y0 + (y1 - y0) * 0.35, p) + sin(t) * 4;
+
+  // little wake
+  stroke(0, 0, 100, 0.10 * p);
+  strokeWeight(2);
+  noFill();
+  arc(x - 10, y + 12, 40, 16, 0.1 * PI, 0.9 * PI);
+  arc(x + 10, y + 12, 40, 16, 0.1 * PI, 0.9 * PI);
+
+  // swimmer stick-ish
+  stroke(0, 0, 100, 0.55 * p);
+  strokeWeight(3);
+  // head
+  point(x, y);
+  // arms splashing
+  line(x - 18, y + 6, x - 2, y + 14);
+  line(x + 18, y + 6, x + 2, y + 14);
+}
+
+function drawTent(p) {
+  const groundY = height * 0.78;
+  const x = width * 0.22;
+  const w = min(width, height) * 0.30;
+  const h = min(width, height) * 0.16;
+
+  const g = smoothstep(p);
+
+  // glow
+  for (let k = 6; k >= 1; k--) {
+    stroke(50, 25, 100, 0.01 * g);
+    strokeWeight(k * 8);
+    noFill();
+    tentOutline(x, groundY, w * g, h * g);
   }
 
+  // body
+  noStroke();
+  fill(210, 30, 22, 0.65 * g);
+  tentBody(x, groundY, w * g, h * g);
+
+  // stripes
+  stroke(0, 0, 100, 0.18 * g);
+  strokeWeight(3);
+  for (let i = -4; i <= 4; i++) {
+    const xx = x + i * (w * 0.10) * g;
+    line(xx, groundY - h * g, xx, groundY);
+  }
+
+  // banner
+  noStroke();
+  fill(45, 55, 100, 0.22 * g);
+  rect(x - w * 0.20 * g, groundY - h * 1.05 * g, w * 0.40 * g, h * 0.25 * g, 10);
+}
+
+function tentOutline(x, groundY, w, h) {
+  beginShape();
+  vertex(x - w * 0.55, groundY);
+  vertex(x - w * 0.40, groundY - h);
+  vertex(x, groundY - h * 1.15);
+  vertex(x + w * 0.40, groundY - h);
+  vertex(x + w * 0.55, groundY);
+  endShape(CLOSE);
+}
+function tentBody(x, groundY, w, h) {
+  beginShape();
+  vertex(x - w * 0.55, groundY);
+  vertex(x - w * 0.40, groundY - h);
+  vertex(x, groundY - h * 1.15);
+  vertex(x + w * 0.40, groundY - h);
+  vertex(x + w * 0.55, groundY);
+  endShape(CLOSE);
+}
+
+function drawDancer(p) {
+  const g = smoothstep(p);
+  const groundY = height * 0.78;
+  const x = width * 0.40;
+  const y = groundY;
+
+  const t = frameCount * 0.06;
+  const bounce = sin(t) * 6 * g;
+  const clap = 0.5 + 0.5 * sin(t * 1.7);
+
+  // simple “schuhplattler” stick figure with moving arms/legs
+  stroke(0, 0, 100, 0.55 * g);
+  strokeWeight(4);
+
+  const headY = y - 95 * g + bounce;
+  point(x, headY);
+
+  // body
+  line(x, headY + 10, x, y - 40 * g + bounce);
+
+  // arms clapping thighs
+  const armA = lerp(0.2, 1.0, clap);
+  line(x, headY + 25, x - 35 * g, headY + (55 + 20 * armA) * g);
+  line(x, headY + 25, x + 35 * g, headY + (55 + 20 * armA) * g);
+
+  // legs kicking
+  const kick = sin(t * 1.2);
+  line(x, y - 40 * g + bounce, x - (18 + 22 * kick) * g, y + (-5 + 18 * abs(kick)) * g);
+  line(x, y - 40 * g + bounce, x + (18 + 22 * -kick) * g, y + (-5 + 18 * abs(kick)) * g);
+
+  // hat
+  strokeWeight(3);
+  line(x - 18 * g, headY - 10 * g, x + 18 * g, headY - 10 * g);
+}
+
+function drawOak(p, nightMix) {
+  const g = smoothstep(p);
+  const groundY = height * 0.78;
+  const x = width * 0.78;
+
+  const trunkH = min(width, height) * 0.28 * g;
+  const trunkW = min(width, height) * 0.03;
+
+  // trunk glow + trunk
+  for (let k = 6; k >= 1; k--) {
+    stroke(45, 25, 100, 0.010 * g);
+    strokeWeight(k * 9);
+    line(x, groundY, x, groundY - trunkH);
+  }
+  stroke(28, 35, 25, 0.70 * g);
+  strokeWeight(6);
+  line(x, groundY, x, groundY - trunkH);
+
+  // branches
+  strokeWeight(4);
+  const by = groundY - trunkH * 0.65;
+  line(x, by, x - 60 * g, by - 45 * g);
+  line(x, by, x + 70 * g, by - 35 * g);
+
+  // canopy
+  noStroke();
+  const hue = lerp(120, 130, nightMix);
+  for (let i = 9; i >= 1; i--) {
+    fill(hue, 45, lerp(28, 18, nightMix), 0.05 * g);
+    circle(x + wind * 0.15 * i, groundY - trunkH - 30 * g, (120 + i * 35) * g);
+  }
+  for (let i = 0; i < 10; i++) {
+    const ox = (noise(seed + i * 9) - 0.5) * 140 * g + wind * 0.8;
+    const oy = (noise(seed + i * 13) - 0.5) * 90 * g;
+    fill(hue + random(-6, 6), 55, lerp(35, 20, nightMix), 0.22 * g);
+    circle(x + ox, groundY - trunkH - 40 * g + oy, (60 + 40 * noise(i * 2)) * g);
+  }
+}
+
+function drawCloudAndRain(p, nightMix) {
+  // p goes 0..1 across scenes 7..9
+  // phase: fly in (0..0.35), rain (0.35..0.7), fly out (0.7..1)
+  const inP = smoothstep(map(p, 0.00, 0.35, 0, 1, true));
+  const rainP = smoothstep(map(p, 0.35, 0.70, 0, 1, true));
+  const outP = smoothstep(map(p, 0.70, 1.00, 0, 1, true));
+
+  const xIn = lerp(-220, width * 0.78, inP);
+  const xOut = lerp(width * 0.78, width + 260, outP);
+  const x = (p < 0.70) ? xIn : xOut;
+  const y = height * 0.17 + sin(frameCount * 0.01) * 6;
+
+  // cloud
+  noStroke();
+  const a = 0.16 + 0.16 * (1 - nightMix);
+  for (let i = 0; i < 7; i++) {
+    const ox = (i - 3) * 40 + noise(seed + i * 10, frameCount * 0.01) * 12;
+    const oy = noise(seed + i * 20, frameCount * 0.01) * 10;
+    const rr = 95 + noise(seed + i * 30) * 40;
+    fill(0, 0, 100, a * (0.75 - i * 0.06));
+    circle(x + ox + wind * 0.6, y + oy, rr);
+  }
+
+  // rain over oak (center at oak x)
+  if (rainP > 0.02) {
+    const oakX = width * 0.78;
+    const top = y + 40;
+    const bottom = height * 0.80;
+    stroke(205, 30, 100, 0.12 * rainP);
+    strokeWeight(2);
+    for (let i = 0; i < 70; i++) {
+      const rx = oakX + (noise(seed + i * 3, frameCount * 0.02) - 0.5) * 220 + wind * 1.5;
+      const ry = top + noise(seed + i * 7, frameCount * 0.02) * (bottom - top);
+      line(rx, ry, rx + wind * 0.2, ry + 22);
+    }
+  }
+}
+
+function drawMoon(p, nightMix) {
+  if (nightMix < 0.2) return;
+  const x = width * 0.62;
+  const horizon = height * 0.62;
+  const y = lerp(horizon + 90, height * 0.16, smoothstep(p));
+  const r = min(width, height) * 0.05;
+
+  noStroke();
+  fill(60, 10, 100, 0.22 * nightMix);
+  circle(x, y, r * 2.6);
+
+  fill(60, 12, 100, 0.85 * nightMix);
+  circle(x, y, r * 2.0);
+
+  // crescent cut
+  fill(235, 55, 10, 1); // match night sky tone-ish
+  circle(x + r * 0.55, y - r * 0.15, r * 1.8);
+}
+
+function drawCarousel(p, nightMix) {
+  const g = smoothstep(p);
+  const groundY = height * 0.78;
+  const x = width * 0.50;
+  const y = groundY;
+
+  // rotate
+  carousel.ang += 0.02 * (0.3 + 0.7 * g);
+
+  // base
+  noStroke();
+  fill(300, 20, 18, 0.65 * g);
+  rect(x - 140 * g, y - 20 * g, 280 * g, 30 * g, 12);
+
+  // canopy
+  fill(45, 55, 100, 0.18 * g);
+  ellipse(x, y - 140 * g, 320 * g, 140 * g);
+
+  // poles
+  stroke(0, 0, 100, 0.18 * g);
+  strokeWeight(3);
+  for (let i = 0; i < 8; i++) {
+    const a = (i / 8) * TAU + carousel.ang;
+    const px = x + cos(a) * 110 * g;
+    line(px, y - 20 * g, px, y - 130 * g);
+  }
+
+  // white elephant on carousel (simple, readable)
+  const ex = x + cos(carousel.ang) * 110 * g;
+  const ey = y - 55 * g + sin(carousel.ang) * 8;
+
+  drawElephant(ex, ey, 0.9 * g, nightMix);
+}
+
+function drawElephant(x, y, s, nightMix) {
+  push();
+  translate(x, y);
+  scale(s);
+
+  // glow
+  for (let k = 5; k >= 1; k--) {
+    stroke(0, 0, 100, 0.02);
+    strokeWeight(k * 6);
+    noFill();
+    elephantShape();
+  }
+
+  // body
+  stroke(0, 0, 100, 0.55);
+  strokeWeight(3);
+  fill(0, 0, 100, 0.10 + 0.10 * nightMix);
+  elephantShapeFilled();
+
+  // eye
+  noStroke();
+  fill(0, 0, 100, 0.45);
+  circle(18, -10, 4);
   pop();
 }
 
-function churchShape(w, hh) {
-  // outline (no fill)
+function elephantShape() {
+  // outline-ish
   beginShape();
-  // base
-  vertex(-w * 0.55, 0);
-  vertex(-w * 0.55, -hh * 0.75);
-  // belfry step
-  vertex(-w * 0.40, -hh * 0.75);
-  vertex(-w * 0.40, -hh * 0.90);
-  vertex(-w * 0.28, -hh * 0.90);
-  // spire
-  vertex(0, -hh);
-  vertex(w * 0.28, -hh * 0.90);
-  vertex(w * 0.40, -hh * 0.90);
-  vertex(w * 0.40, -hh * 0.75);
-  vertex(w * 0.55, -hh * 0.75);
-  vertex(w * 0.55, 0);
+  // body
+  vertex(-30, 0);
+  vertex(-28, -18);
+  vertex(-10, -28);
+  vertex(18, -26);
+  vertex(34, -14);
+  vertex(32, 6);
+  vertex(-30, 6);
   endShape(CLOSE);
-}
-
-function churchShapeFilled(w, hh) {
-  beginShape();
-  vertex(-w * 0.55, 0);
-  vertex(-w * 0.55, -hh * 0.75);
-  vertex(-w * 0.40, -hh * 0.75);
-  vertex(-w * 0.40, -hh * 0.90);
-  vertex(-w * 0.28, -hh * 0.90);
-  vertex(0, -hh);
-  vertex(w * 0.28, -hh * 0.90);
-  vertex(w * 0.40, -hh * 0.90);
-  vertex(w * 0.40, -hh * 0.75);
-  vertex(w * 0.55, -hh * 0.75);
-  vertex(w * 0.55, 0);
-  endShape(CLOSE);
-}
-
-function drawOrchard(p) {
-  // trees grow across the valley foreground, apples appear later
-  const grow = smoothstep(p);
-
-  for (let t of trees) {
-    drawTree(t, grow);
-  }
-
-  // apples appear after trunk/branches formed
-  if (p > 0.55) {
-    const aP = smoothstep(map(p, 0.55, 1.0, 0, 1, true));
-    drawApples(aP);
-  }
-}
-
-function makeTree(i, n) {
-  // distribute in two bands left + center
-  const band = (i % 2 === 0) ? 0.18 : 0.52;
-  const x = width * (band + random(-0.12, 0.22));
-  const groundY = height * 0.78 + random(-6, 10);
-  const size = random(0.75, 1.35);
-  const lean = random(-0.08, 0.08);
-  const hue = random([110, 120, 135]); // green-ish
-  return { x, groundY, size, lean, hue, id: i };
-}
-
-function drawTree(tr, g) {
-  const baseH = min(width, height) * 0.22 * tr.size;
-  const trunkH = baseH * (0.55 + 0.45 * g);
-  const crownR = baseH * (0.55 + 0.65 * g);
 
   // trunk
+  beginShape();
+  vertex(34, -10);
+  vertex(46, -6);
+  vertex(50, 6);
+  vertex(42, 14);
+  vertex(36, 8);
+  endShape(CLOSE);
+}
+
+function elephantShapeFilled() {
+  // body
+  beginShape();
+  vertex(-30, 0);
+  vertex(-28, -18);
+  vertex(-10, -28);
+  vertex(18, -26);
+  vertex(34, -14);
+  vertex(32, 6);
+  vertex(-30, 6);
+  endShape(CLOSE);
+
+  // legs
+  rect(-22, 6, 10, 16, 4);
+  rect(-4, 6, 10, 16, 4);
+  rect(14, 6, 10, 16, 4);
+
+  // ear
+  ellipse(14, -12, 18, 16);
+
+  // trunk
+  beginShape();
+  vertex(34, -10);
+  vertex(46, -6);
+  vertex(50, 6);
+  vertex(42, 14);
+  vertex(36, 8);
+  endShape(CLOSE);
+}
+
+function drawTower(p, nightMix) {
+  const g = smoothstep(p);
+  const groundY = height * 0.78;
+  const x = width * 0.90;
+  const w = min(width, height) * 0.07;
+  const h = min(width, height) * 0.52 * g;
+
   push();
-  translate(tr.x, tr.groundY);
-  rotate(tr.lean);
+  translate(x, groundY);
 
-  // trunk glow
-  for (let k = 4; k >= 1; k--) {
-    stroke(30, 20, 100, 0.015);
-    strokeWeight(k * 5);
-    line(0, 0, 0, -trunkH);
+  // glow
+  for (let k = 7; k >= 1; k--) {
+    stroke(190, 25, 100, 0.010 * g);
+    strokeWeight(k * 9);
+    noFill();
+    towerOutline(w, h);
   }
 
-  stroke(28, 35, 25, 0.65);
-  strokeWeight(3.0);
-  line(0, 0, 0, -trunkH);
+  // body
+  stroke(200, 15, 85, 0.45);
+  strokeWeight(2.2);
+  fill(210, 10, lerp(18, 10, nightMix), 0.70 * g);
+  towerBody(w, h);
 
-  // simple branches
-  if (g > 0.25) {
-    const bg = smoothstep(map(g, 0.25, 1.0, 0, 1, true));
-    strokeWeight(2.0);
-    const b1 = trunkH * 0.30;
-    const b2 = trunkH * 0.45;
-    line(0, -b1, -18 * tr.size * bg, -b1 - 22 * tr.size * bg);
-    line(0, -b2,  20 * tr.size * bg, -b2 - 24 * tr.size * bg);
-  }
-
-  // crown (apple tree blobs)
-  if (g > 0.18) {
-    const cg = smoothstep(map(g, 0.18, 1.0, 0, 1, true));
+  // top beacon
+  if (p > 0.65) {
+    const a = 0.12 + 0.10 * sin(frameCount * 0.08);
     noStroke();
-    const cx = 0;
-    const cy = -trunkH - crownR * 0.15;
-
-    // layered foliage with slight wind sway
-    const sway = wind * 0.12 + sin((frameCount + tr.id * 30) * 0.01) * 0.6;
-    for (let i = 10; i >= 1; i--) {
-      const a = 0.030 * i * cg;
-      fill(tr.hue, 45, 28 + 24 * cg, a * 0.08);
-      circle(cx + sway * i, cy, crownR * (1 + i * 0.12));
-    }
-
-    for (let i = 0; i < 9; i++) {
-      const ox = (noise(tr.id * 3 + i) - 0.5) * crownR * 0.85 + sway * 2.5;
-      const oy = (noise(tr.id * 7 + i) - 0.5) * crownR * 0.55;
-      const rr = crownR * (0.35 + 0.25 * noise(tr.id * 11 + i)) * cg;
-      fill(tr.hue + random(-6, 6), 55, 32 + 30 * cg, 0.26);
-      circle(cx + ox, cy + oy, rr);
-    }
+    fill(50, 60, 100, a);
+    circle(0, -h - 18, 18);
   }
 
   pop();
 }
 
-function drawApples(aP) {
-  // sprinkle apples around crowns; deterministic positions
-  noStroke();
-  for (let tr of trees) {
-    const baseH = min(width, height) * 0.22 * tr.size;
-    const trunkH = baseH * 0.95;
-    const crownR = baseH * 1.10;
-
-    const cx = tr.x;
-    const cy = tr.groundY - trunkH - crownR * 0.15;
-
-    const count = 4 + (tr.id % 5);
-    for (let i = 0; i < count; i++) {
-      // deterministic pseudo-random per tree
-      const rx = (noise(tr.id * 13.7 + i * 9.1) - 0.5) * crownR * 0.9;
-      const ry = (noise(tr.id * 21.3 + i * 6.2) - 0.5) * crownR * 0.55;
-      const r = (6 + 6 * noise(tr.id * 4.2 + i * 3.3)) * aP;
-
-      const shine = 0.4 + 0.6 * noise((frameCount * 0.02) + tr.id + i);
-      // apples: red with tiny highlight
-      fill(0, 70, 55 + 35 * shine, 0.22 * aP);
-      circle(cx + rx, cy + ry, r * 2.3);
-      fill(0, 75, 85, 0.16 * aP);
-      circle(cx + rx - r * 0.35, cy + ry - r * 0.35, r * 0.8);
-    }
-  }
+function towerOutline(w, h) {
+  beginShape();
+  vertex(-w, 0);
+  vertex(-w * 0.75, -h);
+  vertex(0, -h - 28);
+  vertex(w * 0.75, -h);
+  vertex(w, 0);
+  endShape(CLOSE);
+}
+function towerBody(w, h) {
+  beginShape();
+  vertex(-w, 0);
+  vertex(-w * 0.75, -h);
+  vertex(0, -h - 28);
+  vertex(w * 0.75, -h);
+  vertex(w, 0);
+  endShape(CLOSE);
 }
 
-function drawGroundForeground() {
-  const y = height * 0.78;
-
-  // ground gradient
-  noStroke();
-  for (let i = 0; i < 10; i++) {
-    const a = 0.10 + i * 0.02;
-    fill(110, 35, 12 + i * 2, a);
-    rect(0, y + i * 16, width, 20);
-  }
-
-  // subtle grass strokes
-  stroke(110, 35, 25, 0.06);
-  strokeWeight(1);
-  for (let x = 0; x < width; x += 10) {
-    const h = 12 + noise(x * 0.02, seed * 0.01) * 18;
-    line(x, y + 60, x + wind * 0.2, y + 60 - h);
-  }
-}
-
-// ----------------- HUD -----------------
+// ---------------- HUD ----------------
 function drawHUD() {
-  const p = actProgress();
-  const textA = (act === 1) ? "Sunrise" : (act === 2 ? "Church tower" : "Apple orchard");
-  const hint = "Tap: next / finish  •  Swipe: wind";
-
   push();
   resetMatrix();
   textAlign(LEFT, TOP);
@@ -498,24 +665,19 @@ function drawHUD() {
   const pad = 14 * s;
 
   fill(0, 0, 0, 0.18);
-  rect(pad - 8, pad - 8, 330 * s, 56 * s, 10);
+  rect(pad - 8, pad - 8, 360 * s, 52 * s, 10);
 
+  fill(0, 0, 100, 0.86);
+  textSize(14 * s);
+  text("Tap: skip / next   •   Swipe: wind", pad, pad);
 
-
-  fill(0, 0, 100, 0.66);
+  fill(0, 0, 100, 0.62);
   textSize(12 * s);
-  text(hint, pad, pad + 20 * s);
-
-  // tiny progress bar
-  fill(0, 0, 100, 0.20);
-  rect(pad, pad + 40 * s, 280 * s, 6 * s, 4);
-  fill(45, 35, 100, 0.35);
-  rect(pad, pad + 40 * s, 280 * s * p, 6 * s, 4);
-
+  text(`Scene ${scene + 1}/11`, pad, pad + 20 * s);
   pop();
 }
 
-// --------------- Utility ---------------
+// ---------------- Utils ----------------
 function smoothstep(x) {
   x = constrain(x, 0, 1);
   return x * x * (3 - 2 * x);
